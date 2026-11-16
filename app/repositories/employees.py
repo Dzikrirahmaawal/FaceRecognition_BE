@@ -42,7 +42,7 @@ def list_employees(
             )
         )
     if is_active is not None:
-        stmt = stmt.where(Employee.is_active.is_(is_active))
+        stmt = stmt.where(Employee.is_active == is_active)
     return stmt
 
 

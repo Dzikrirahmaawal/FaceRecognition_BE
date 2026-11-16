@@ -26,7 +26,7 @@ def get_by_token_hash(db: Session, token_hash: str) -> Kiosk | None:
 def list_kiosks(db: Session, page: int, page_size: int, is_active: bool | None = None):
     stmt = select(Kiosk).order_by(Kiosk.created_at.desc())
     if is_active is not None:
-        stmt = stmt.where(Kiosk.is_active.is_(is_active))
+        stmt = stmt.where(Kiosk.is_active == is_active)
     return stmt
 
 

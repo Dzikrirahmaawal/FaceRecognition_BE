@@ -31,7 +31,7 @@ def list_users(db: Session, page: int, page_size: int, role: str | None = None, 
     if role:
         stmt = stmt.where(User.role == role)
     if is_active is not None:
-        stmt = stmt.where(User.is_active.is_(is_active))
+        stmt = stmt.where(User.is_active == is_active)
     return stmt
 
 

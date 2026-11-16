@@ -39,7 +39,7 @@ def list_visitors(
             )
         )
     if is_active is not None:
-        stmt = stmt.where(Visitor.is_active.is_(is_active))
+        stmt = stmt.where(Visitor.is_active == is_active)
     return stmt
 
 
