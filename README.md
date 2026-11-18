@@ -342,3 +342,6 @@ Not verified in this environment:
 - **Real face recognition and liveness accuracy.** No real model or licensed liveness service is bundled. Mock providers only validate workflow behavior. Thresholds must be calibrated against the chosen provider and real data.
 - **Production deployment hardening.** Local validation uses the development compose configuration (`TrustServerCertificate=yes`, mock providers, container-managed secrets). Trusted TLS certificates, licensed providers, and external secret management must be configured and verified before production.
 - **Multi-process rate limiting.** The built-in limiter is in-memory and intended for a single process; use a shared store for horizontally scaled deployments.
+<<<<<<< Updated upstream
+=======
+- **Re-enrollment.** Existing visitor/staff records are preserved, but any previously stored embeddings were produced by the old mock/deterministic encoder and are not valid SFace embeddings. Enrollment re-generates real SFace embeddings; existing profiles remain in the database but will not match under SFace until re-enrolled.
