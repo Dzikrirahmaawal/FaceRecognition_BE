@@ -29,6 +29,8 @@ class LivenessResult:
     provider: str
     score: float | None = None
     reason: str | None = None
+    latency_ms: float | None = None
+    model_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -120,7 +122,9 @@ class LivenessProvider(ABC):
     name: str
 
     @abstractmethod
-    def verify_liveness(self, image: np.ndarray) -> LivenessResult:
+    def verify_liveness(
+        self, image: np.ndarray, face_bbox: tuple[int, int, int, int] | None = None
+    ) -> LivenessResult:
         ...
 
     def is_available(self) -> bool:

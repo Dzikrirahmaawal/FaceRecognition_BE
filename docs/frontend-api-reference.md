@@ -70,6 +70,28 @@ are accepted by bearer-protected endpoints.
 7. `last_seen_at` is refreshed (at most once per 60 s) on any kiosk-authenticated
    request; there is no explicit heartbeat endpoint.
 
+### Unsupported Endpoints
+
+The following endpoints are **not implemented** in the backend:
+
+| Endpoint | HTTP Method | Status | Notes |
+|---|---|---|---|
+| `POST /api/v1/auth/face-profile` | POST | **404 Not Found** | Awaiting backend implementation |
+| `POST /api/v1/auth/face-login` | POST | **404 Not Found** | Awaiting backend implementation |
+
+> **Frontend action:** Do not call these endpoints. They will return 404 Not Found. Frontend integration for these requires separate backend implementation.
+
+### Administrator/User Biometric Authentication
+
+> **Important:** The following endpoints are **not currently available** in the backend:
+>
+> - `POST /api/v1/auth/face-profile` — Not implemented; returns 404 Not Found
+> - `POST /api/v1/auth/face-login` — Not implemented; returns 404 Not Found
+>
+> **Frontend guidance:** Do not call these unavailable endpoints. The supported login flow remains username/password authentication via `POST /api/v1/auth/login`. Frontend developers must not attempt to work around these gaps by calling visitor face enrollment or identification endpoints.
+>
+> Biometric authentication (face profile / face login) requires a separate backend implementation and API contract. Coordinate with backend developers for timeline and design specifications.
+
 ### Login response shape
 
 ```json
@@ -292,7 +314,10 @@ REFRESH_TOKEN_REUSED` and revokes every session of that user.
 { "ready": true, "checks": { "database": { "ok": true }, "face_provider": { "ok": true, "name": "mock", "model_version": "mock-v1" }, "liveness_provider": { "ok": true, "name": "mock" } }, "timestamp": "..." }
 ```
 
-Failed checks include an `error` key with the exception class name. `GET /`
+Failed checks include an `error` key with the exception class name. When liveness is
+disabled (`FACE_LIVENESS_PROVIDER=disabled`), the `liveness_provider` check reports
+`"ok": true, "name": "disabled", "disabled": true` and the service remains ready;
+however, no anti-spoofing protection is active. `GET /`
 (root, not in the OpenAPI schema) returns basic app metadata.
 
 ### 3. Visitor Management (5)
@@ -528,7 +553,7 @@ authorization (`409 BIOMETRIC_AUTHORIZATION_REQUIRED`), or no active profile
 ### 9. Liveness Detection (1)
 
 | Method | Path | Auth | Permission | Body | Success |
-| --- | --- | --- | --- | --- | --- |
+|---|---|---|---|---|---|
 | POST | `/face/liveness` | Bearer or `X-Kiosk-Token` | `face:identify` (staff only) | multipart `image` | 200 |
 
 ```json
@@ -540,6 +565,41 @@ This endpoint is a diagnostic check: it returns `200` with `passed: true` or
 fails with `422 FACE_QUALITY_REJECTED` (or image decode/validation errors) when
 the image itself is unusable. By contrast, the enroll/identify/verify flows
 enforce liveness internally and raise `422 LIVENESS_FAILED` when it fails.
+
+**Liveness provider configuration** (`FACE_LIVENESS_PROVIDER`):
+
+| Provider | Behavior |
+|---|---|
+| `disabled` | Anti-spoofing protection is intentionally off. `verify_liveness` always returns `passed: false` with reason `liveness_disabled`. Enroll/identify/verify fail closed with `422 LIVENESS_FAILED`. `/ready` reports ready-but-disabled. |
+| `mock` | Test-only. Always returns `passed: true`. Rejected in production. |
+| `http` | Delegates to an external liveness service via HTTP POST. Requires `FACE_LIVENESS_URL`. |
+| `minifasnet` | Real passive anti-spoofing using MiniFASNet V2 ONNX model (CPU-only). Model loaded from `FACE_LIVENESS_MODEL_PATH`. Returns `passed: true` when live score >= `FACE_LIVENESS_THRESHOLD`. |
+
+**Liveness mode** (`FACE_LIVENESS_MODE`):
+
+| Mode | Behavior |
+|---|---|
+| `enforce` (default) | Liveness failures block enrollment/identification/verification with `422 LIVENESS_FAILED`. Required in production. |
+| `shadow` | Liveness still runs and its score/decision is logged server-side, but the request proceeds regardless. Useful for collecting score distributions before enabling enforcement. Not allowed in production. |
+
+The MiniFASNet V2 model (Apache 2.0) is from
+[minivision-ai/Silent-Face-Anti-Spoofing](https://github.com/minivision-ai/Silent-Face-Anti-Spoofing),
+distributed as ONNX via
+[garciafido/minifasnet-v2-anti-spoofing-onnx](https://huggingface.co/garciafido/minifasnet-v2-anti-spoofing-onnx).
+Model weights and code are both Apache 2.0 licensed.
+
+**Configuration keys:**
+
+| Key | Default | Description |
+|---|---|---|
+| `FACE_LIVENESS_PROVIDER` | `disabled` | `mock`, `http`, `disabled`, or `minifasnet` |
+| `FACE_LIVENESS_MODE` | `enforce` | `enforce` or `shadow` |
+| `FACE_LIVENESS_MODEL_PATH` | `""` | Path to MiniFASNet V2 ONNX model file |
+| `FACE_LIVENESS_MODEL_VERSION` | `minifasnet-v2-2.7-80x80` | Model version string |
+| `FACE_LIVENESS_MODEL_SHA256` | `""` | SHA-256 of model file (verified at load) |
+| `FACE_LIVENESS_THRESHOLD` | `0.5` | Live score threshold (0.0-1.0, higher = stricter) |
+| `FACE_LIVENESS_ONNX_INTRA_THREADS` | `2` | ONNX intra-op thread count |
+| `FACE_LIVENESS_ONNX_INTER_THREADS` | `1` | ONNX inter-op thread count |
 
 ### 10. Attendance Check-in (1)
 

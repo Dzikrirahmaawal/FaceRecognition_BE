@@ -150,6 +150,14 @@ visitor already has an active `CHECKED_IN` visit, `check-out`. If
 `consent_granted=true`. The kiosk client must send `X-Kiosk-Token` and never a
 staff JWT.
 
+**Liveness:** The backend runs passive anti-spoofing on every face image during
+enrollment, identification, and verification. If liveness fails, the request is
+rejected with `422 LIVENESS_FAILED`. The frontend should handle this by
+prompting the user to recapture under better lighting or with a real face (not
+a photo or screen). The liveness provider is configured via
+`FACE_LIVENESS_PROVIDER`; in `shadow` mode, liveness runs but does not block
+(useful for score collection before enabling enforcement).
+
 ### Kiosk management
 
 | Need | Endpoint | Auth |
@@ -300,8 +308,19 @@ These are not present in the backend today. Do not build UI that assumes them.
 ## Verified vs unverified in this task
 
 - Verified live: `/health`, `/ready`, `/openapi.json` (47 operations / 37
-  paths), `/docs`, CORS preflight, 401/404/405/422 envelopes.
+  paths), `/docs`, CORS preflight, 401/404/422 envelopes.
 - Verified from source and tests: all endpoint contracts, RBAC, error codes,
   reporting behavior, and the SQL Server `visitor_report` fix.
 - Not verified live: authenticated reads/writes and any mutation, because no
   credentials were used and destructive operations are out of scope.
+
+## Administrator/User Biometric Authentication
+
+**Important:** The following endpoints are **not currently available** in the backend:
+
+- `POST /api/v1/auth/face-profile` — Not implemented; returns 404 Not Found
+- `POST /api/v1/auth/face-login` — Not implemented; returns 404 Not Found
+
+> **Frontend guidance:** Do not call these unavailable endpoints. The supported login flow remains username/password authentication via `POST /api/v1/auth/login`. Frontend developers must not attempt to work around these gaps by calling visitor face enrollment or identification endpoints.
+
+> Biometric authentication (face profile / face login) requires a separate backend implementation and API contract. Coordinate with backend developers for timeline and design specifications.

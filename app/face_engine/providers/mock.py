@@ -81,5 +81,7 @@ class MockLivenessProvider(LivenessProvider):
 
     name = "mock"
 
-    def verify_liveness(self, image: np.ndarray) -> LivenessResult:
+    def verify_liveness(
+        self, image: np.ndarray, face_bbox: tuple[int, int, int, int] | None = None
+    ) -> LivenessResult:  # noqa: ARG002 - bbox not used by mock provider
         return LivenessResult(passed=True, provider=self.name, score=1.0)

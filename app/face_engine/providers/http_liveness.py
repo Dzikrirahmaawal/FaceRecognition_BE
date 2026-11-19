@@ -24,7 +24,9 @@ class HttpLivenessProvider(LivenessProvider):
         self.api_key = settings.FACE_LIVENESS_API_KEY
         self.timeout = settings.FACE_LIVENESS_TIMEOUT_SECONDS
 
-    def verify_liveness(self, image: np.ndarray) -> LivenessResult:
+    def verify_liveness(
+        self, image: np.ndarray, face_bbox: tuple[int, int, int, int] | None = None
+    ) -> LivenessResult:  # noqa: ARG002 - bbox not used by HTTP provider
         ok, buffer = cv2.imencode(".jpg", image)
         if not ok:
             raise ProviderUnavailableError("Could not encode image for liveness verification")

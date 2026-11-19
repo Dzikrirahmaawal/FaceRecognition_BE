@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.exceptions import ConflictError, NotFoundError, ValidationAppError
+from app.core.logging import get_logger
 from app.core.types import utcnow
 from app.face_engine.crypto import BiometricCipher
 from app.face_engine.detection import validate_single_face
@@ -24,6 +25,8 @@ from app.schemas.visitor import VisitorCreate
 from app.services import audit_service, visitor_service
 from app.utils.images import decode_image
 
+logger = get_logger(__name__)
+
 
 def _confidence(value: float) -> Decimal:
     return Decimal(str(round(float(value), 4))).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
@@ -38,7 +41,7 @@ def _visitor_summary(visitor) -> dict:  # noqa: ANN001
     }
 
 
-def _prepare_capture(image_bytes: bytes, content_type: str | None):
+def _prepare_capture(image_bytes: bytes, content_type: str | None, operation: str = "enroll"):
     provider = get_face_provider()
     liveness_provider = get_liveness_provider()
     image = decode_image(image_bytes, content_type)
@@ -51,12 +54,47 @@ def _prepare_capture(image_bytes: bytes, content_type: str | None):
             error_code="FACE_QUALITY_REJECTED",
             details={"issues": quality.issues},
         )
-    liveness = liveness_provider.verify_liveness(image)
+    liveness = liveness_provider.verify_liveness(image, face.bbox)
     if not liveness.passed:
-        raise ValidationAppError(
-            "Liveness verification failed",
-            error_code="LIVENESS_FAILED",
-            details={"provider": liveness.provider, "reason": liveness.reason},
+        if settings.FACE_LIVENESS_MODE == "shadow":
+            logger.warning(
+                "Liveness shadow-mode failure (non-blocking)",
+                extra={
+                    "extra_data": {
+                        "event": "liveness_shadow_failure",
+                        "operation": operation,
+                        "provider": liveness.provider,
+                        "model_version": liveness.model_version,
+                        "score": liveness.score,
+                        "threshold": settings.FACE_LIVENESS_THRESHOLD,
+                        "latency_ms": liveness.latency_ms,
+                        "would_pass": False,
+                        "decision": "allowed_shadow",
+                    }
+                },
+            )
+        else:
+            raise ValidationAppError(
+                "Liveness verification failed",
+                error_code="LIVENESS_FAILED",
+                details={"provider": liveness.provider, "reason": liveness.reason},
+            )
+    elif settings.FACE_LIVENESS_MODE == "shadow":
+        logger.info(
+            "Liveness shadow-mode success",
+            extra={
+                "extra_data": {
+                    "event": "liveness_shadow_success",
+                    "operation": operation,
+                    "provider": liveness.provider,
+                    "model_version": liveness.model_version,
+                    "score": liveness.score,
+                    "threshold": settings.FACE_LIVENESS_THRESHOLD,
+                    "latency_ms": liveness.latency_ms,
+                    "would_pass": True,
+                    "decision": "allowed_shadow",
+                }
+            },
         )
     embedding = provider.generate_embedding(image, face)
     return image, embedding, quality, liveness
@@ -85,7 +123,7 @@ def enroll(
             error_code="CONSENT_REQUIRED",
         )
 
-    _image, embedding, _quality, _liveness = _prepare_capture(image_bytes, content_type)
+    _image, embedding, _quality, _liveness = _prepare_capture(image_bytes, content_type, operation="enroll")
     provider = get_face_provider()
     cipher = BiometricCipher()
     now = utcnow()
@@ -125,27 +163,79 @@ def enroll(
         )
 
     profiles = visitors_repo.list_active_profiles(db, provider.model_version, provider.embedding_version)
+    highest_similarity = 0.0
+    matched_profile = None
+
     for profile in profiles:
         if profile.visitor_id == visitor.id:
             continue
         other_embedding = cipher.decrypt_embedding(profile.embedding_data)
         if other_embedding is None:
             continue
+        if len(other_embedding) != len(embedding):
+            continue
+        if not np.all(np.isfinite(other_embedding)):
+            continue
         similarity = provider.compare_embeddings(embedding, other_embedding)
-        if similarity >= settings.FACE_DUPLICATE_THRESHOLD:
-            db.rollback()
-            other_visitor = visitors_repo.get(db, profile.visitor_id)
-            raise ConflictError(
-                "A very similar face profile already exists. Manual review is required.",
-                error_code="FACE_DUPLICATE_DETECTED",
-                details={
-                    "review_required": True,
-                    "matched_visitor_id": str(profile.visitor_id),
-                    "matched_visitor_code": other_visitor.visitor_code if other_visitor else None,
-                    "matched_visitor_name": other_visitor.full_name if other_visitor else None,
+        logger.info(
+            "Face duplicate comparison",
+            extra={
+                "extra_data": {
+                    "event": "face_duplicate_comparison",
+                    "candidate_visitor_id": str(visitor.id),
+                    "compared_profile_id": str(profile.id),
+                    "compared_visitor_id": str(profile.visitor_id),
                     "similarity": round(float(similarity), 4),
-                },
-            )
+                    "duplicate_threshold": settings.FACE_DUPLICATE_THRESHOLD,
+                    "confirmation_threshold": settings.FACE_DUPLICATE_CONFIRM_THRESHOLD,
+                    "model_version": profile.model_version,
+                    "embedding_version": profile.embedding_version,
+                    "compared_profile_active": bool(profile.is_active),
+                }
+            },
+        )
+        if similarity > highest_similarity:
+            highest_similarity = similarity
+            matched_profile = profile
+
+    if highest_similarity >= settings.FACE_DUPLICATE_CONFIRM_THRESHOLD:
+        db.rollback()
+        logger.warning(
+            "Face duplicate rejected",
+            extra={
+                "extra_data": {
+                    "event": "face_duplicate_rejected",
+                    "candidate_visitor_id": str(visitor.id),
+                    "matched_visitor_id": str(matched_profile.visitor_id) if matched_profile else None,
+                    "highest_similarity": round(float(highest_similarity), 4),
+                    "confirmation_threshold": settings.FACE_DUPLICATE_CONFIRM_THRESHOLD,
+                    "decision": "rejected_confirmed_duplicate",
+                }
+            },
+        )
+        raise ConflictError(
+            "A very similar face profile already exists. Manual review is required.",
+            error_code="FACE_DUPLICATE_DETECTED",
+            details={
+                "review_required": True,
+            },
+        )
+
+    duplicate_review = highest_similarity >= settings.FACE_DUPLICATE_THRESHOLD
+    logger.info(
+        "Face enrollment decision",
+        extra={
+            "extra_data": {
+                "event": "face_enrollment_decision",
+                "candidate_visitor_id": str(visitor.id),
+                "highest_similarity": round(float(highest_similarity), 4),
+                "duplicate_threshold": settings.FACE_DUPLICATE_THRESHOLD,
+                "confirmation_threshold": settings.FACE_DUPLICATE_CONFIRM_THRESHOLD,
+                "duplicate_review": duplicate_review,
+                "decision": "rejected" if highest_similarity >= settings.FACE_DUPLICATE_CONFIRM_THRESHOLD else ("review" if duplicate_review else "allowed"),
+            }
+        },
+    )
 
     profile = FaceProfile(
         visitor_id=visitor.id,
@@ -194,7 +284,7 @@ def enroll(
         "model_version": profile.model_version,
         "embedding_version": profile.embedding_version,
         "consent_recorded": True,
-        "duplicate_review": False,
+        "duplicate_review": duplicate_review,
     }
 
 
@@ -206,7 +296,7 @@ def identify(
     actor,
     ip_address: str | None,
 ) -> dict:
-    _image, embedding, _quality, _liveness = _prepare_capture(image_bytes, content_type)
+    _image, embedding, _quality, _liveness = _prepare_capture(image_bytes, content_type, operation="identify")
     provider = get_face_provider()
     cipher = BiometricCipher()
     profiles = visitors_repo.list_active_profiles(db, provider.model_version, provider.embedding_version)
@@ -281,7 +371,7 @@ def verify(
     if profile is None or profile.embedding_data is None:
         raise NotFoundError("Active face profile not found", error_code="FACE_PROFILE_NOT_FOUND")
 
-    _image, embedding, _quality, _liveness = _prepare_capture(image_bytes, content_type)
+    _image, embedding, _quality, _liveness = _prepare_capture(image_bytes, content_type, operation="verify")
     provider = get_face_provider()
     stored = BiometricCipher().decrypt_embedding(profile.embedding_data)
     similarity = provider.compare_embeddings(embedding, stored) if stored is not None else 0.0
@@ -323,7 +413,7 @@ def test_liveness(
             error_code="FACE_QUALITY_REJECTED",
             details={"issues": quality.issues},
         )
-    liveness = liveness_provider.verify_liveness(image)
+    liveness = liveness_provider.verify_liveness(image, face.bbox)
     audit_service.record(
         db,
         action="LIVENESS_TESTED",

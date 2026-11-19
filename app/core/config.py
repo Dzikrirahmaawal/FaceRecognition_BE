@@ -44,24 +44,37 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE: int = 5 * 1024 * 1024
     ALLOWED_IMAGE_TYPES: str = "image/jpeg,image/png,image/webp"
 
-    FACE_RECOGNITION_PROVIDER: Literal["mock", "insightface", "disabled"] = "mock"
+    FACE_RECOGNITION_PROVIDER: Literal["mock", "insightface", "opencv_sface", "disabled"] = "opencv_sface"
     FACE_MODEL_PATH: str = ""
     FACE_MODEL_VERSION: str = "mock-v1"
+    FACE_DETECTION_MODEL_PATH: str = ""
+    FACE_RECOGNITION_MODEL_PATH: str = ""
     FACE_EMBEDDING_VERSION: str = "1"
     FACE_MATCH_THRESHOLD: float = 0.60
     FACE_REVIEW_THRESHOLD: float = 0.45
     FACE_DUPLICATE_THRESHOLD: float = 0.80
+    FACE_DUPLICATE_CONFIRM_THRESHOLD: float = 0.90
     FACE_AMBIGUITY_MARGIN: float = 0.05
     FACE_MIN_FACE_SIZE: int = 80
     FACE_MIN_BLUR_SCORE: float = 40.0
     FACE_MIN_BRIGHTNESS: float = 30.0
     FACE_MAX_BRIGHTNESS: float = 230.0
     FACE_MAX_IMAGE_PIXELS: int = 25_000_000
+    FACE_DETECTION_SCORE_THRESHOLD: float = 0.60
+    FACE_DETECTION_NMS_THRESHOLD: float = 0.30
+    FACE_DETECTION_TOP_K: int = 5000
 
-    FACE_LIVENESS_PROVIDER: Literal["mock", "http", "disabled"] = "mock"
+    FACE_LIVENESS_PROVIDER: Literal["mock", "http", "disabled", "minifasnet"] = "mock"
+    FACE_LIVENESS_MODE: Literal["enforce", "shadow"] = "enforce"
     FACE_LIVENESS_URL: str = ""
     FACE_LIVENESS_API_KEY: str = ""
     FACE_LIVENESS_TIMEOUT_SECONDS: float = 10.0
+    FACE_LIVENESS_MODEL_PATH: str = ""
+    FACE_LIVENESS_MODEL_VERSION: str = "minifasnet-v2-2.7-80x80"
+    FACE_LIVENESS_MODEL_SHA256: str = ""
+    FACE_LIVENESS_THRESHOLD: float = 0.5
+    FACE_LIVENESS_ONNX_INTRA_THREADS: int = 2
+    FACE_LIVENESS_ONNX_INTER_THREADS: int = 1
 
     BIOMETRIC_ENCRYPTION_KEY: str = ""
 
@@ -134,6 +147,15 @@ class Settings(BaseSettings):
                 raise ValueError("A licensed, non-mock face recognition provider is required in production")
             if self.FACE_LIVENESS_PROVIDER in {"mock", "disabled"}:
                 raise ValueError("A non-mock liveness provider is required in production")
+            if self.FACE_LIVENESS_PROVIDER == "minifasnet":
+                if not self.FACE_LIVENESS_MODEL_PATH:
+                    raise ValueError("FACE_LIVENESS_MODEL_PATH is required for the minifasnet provider")
+                if not self.FACE_LIVENESS_MODEL_SHA256:
+                    raise ValueError("FACE_LIVENESS_MODEL_SHA256 is required for the minifasnet provider")
+                if not (0.0 <= self.FACE_LIVENESS_THRESHOLD <= 1.0):
+                    raise ValueError("FACE_LIVENESS_THRESHOLD must be between 0.0 and 1.0 for the minifasnet provider")
+                if self.FACE_LIVENESS_MODE != "enforce":
+                    raise ValueError("FACE_LIVENESS_MODE must be 'enforce' in production when using minifasnet")
             if self.FACE_RECOGNITION_PROVIDER == "insightface" and not self.FACE_MODEL_PATH:
                 raise ValueError("FACE_MODEL_PATH is required for the insightface provider")
             if not self.BIOMETRIC_ENCRYPTION_KEY:
@@ -150,6 +172,10 @@ class Settings(BaseSettings):
             raise ValueError("FACE_REVIEW_THRESHOLD must be <= FACE_MATCH_THRESHOLD")
         if self.FACE_DUPLICATE_THRESHOLD < self.FACE_MATCH_THRESHOLD:
             raise ValueError("FACE_DUPLICATE_THRESHOLD must be >= FACE_MATCH_THRESHOLD")
+        if self.FACE_DUPLICATE_CONFIRM_THRESHOLD < self.FACE_DUPLICATE_THRESHOLD:
+            raise ValueError("FACE_DUPLICATE_CONFIRM_THRESHOLD must be >= FACE_DUPLICATE_THRESHOLD")
+        if not (0.0 <= self.FACE_LIVENESS_THRESHOLD <= 1.0):
+            raise ValueError("FACE_LIVENESS_THRESHOLD must be between 0.0 and 1.0")
         return self
 
 

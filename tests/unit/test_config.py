@@ -17,6 +17,7 @@ SQLSERVER_URL = (
 def production_settings(**overrides) -> Settings:
     values = {
         "APP_ENV": "production",
+        "DEBUG": False,
         "SECRET_KEY": "a-very-long-production-secret-key-1234567890",
         "DATABASE_URL": SQLSERVER_URL,
         "CORS_ORIGINS": "https://attendance.example.com",

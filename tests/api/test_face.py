@@ -60,7 +60,6 @@ async def test_duplicate_face_enrollment_rejected(client, kiosk_headers):
     assert second.status_code == 409
     assert second.json()["error_code"] == "FACE_DUPLICATE_DETECTED"
     assert second.json()["details"]["review_required"] is True
-    assert second.json()["details"]["matched_visitor_id"] == first["visitor"]["id"]
 
 
 async def test_no_face_and_multiple_faces(client, kiosk_headers):

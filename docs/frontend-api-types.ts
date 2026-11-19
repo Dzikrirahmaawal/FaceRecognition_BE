@@ -257,6 +257,7 @@ export interface ReadyFaceProviderCheck {
 export interface ReadyLivenessProviderCheck {
   ok: boolean;
   name?: string;
+  disabled?: boolean;
   error?: string;
 }
 

@@ -55,6 +55,16 @@ face_embeddings/
 embeddings/
 captures/
 uploads/
+liveness_samples/
+
+# Trained model files
+# NOTE: models/face_detection_yunet_2023mar.onnx and
+# models/face_recognition_sface_2021dec.onnx are intentionally TRACKED
+# (do not add a blanket models/ rule that would untrack them).
+# Only liveness/MiniFASNet models are ignored.
+models/minifasnet_v2.onnx
+models/*liveness*.onnx
+models/*anti_spoof*.onnx
 
 # Credentials and certificates
 secrets/
@@ -67,3 +77,4 @@ credentials/
 # Database backups
 *.bak
 *.dump
+.aider*

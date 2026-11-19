@@ -28,11 +28,16 @@ services:
     environment:
       APP_ENV: development
       DATABASE_URL: "mssql+pyodbc://sa:${MSSQL_SA_PASSWORD}@db:1433/visitor_attendance?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=yes"
+      # MiniFASNet liveness model (read-only bind mount of the models directory)
+      FACE_LIVENESS_MODEL_PATH: "/app/models/minifasnet_v2.onnx"
     depends_on:
       db:
         condition: service_healthy
     ports:
       - "8000:8000"
+    volumes:
+      # Read-only: host models directory exposed in container without copying
+      - "./models:/app/models:ro"
     command:
       [
         "sh",

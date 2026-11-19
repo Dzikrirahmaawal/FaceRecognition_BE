@@ -54,8 +54,24 @@ def ready():
     try:
         liveness_provider = get_liveness_provider()
         available = liveness_provider.is_available()
-        checks["liveness_provider"] = {"ok": available, "name": liveness_provider.name}
-        ready_state = ready_state and available
+        liveness_disabled = liveness_provider.name == "disabled"
+        liveness_mode = settings.FACE_LIVENESS_MODE
+        liveness_enabled = liveness_provider.name not in ("disabled", "mock")
+        check: dict = {
+            "ok": True,
+            "name": liveness_provider.name,
+            "disabled": liveness_disabled,
+            "mode": liveness_mode,
+            "enabled": liveness_enabled,
+        }
+        if liveness_provider.name == "minifasnet":
+            check["model_version"] = liveness_provider.model_version
+            check["available"] = available
+        elif liveness_provider.name == "mock":
+            check["available"] = available
+        checks["liveness_provider"] = check
+        # Disabled liveness is an intentional configuration, not a failure.
+        # The service can still operate without anti-spoofing protection.
     except Exception as exc:  # noqa: BLE001
         ready_state = False
         checks["liveness_provider"] = {"ok": False, "error": type(exc).__name__}
