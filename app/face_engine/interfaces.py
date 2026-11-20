@@ -7,10 +7,13 @@ from dataclasses import dataclass, field
 import numpy as np
 
 
+_LANDMARK_COUNT = 5
+
 @dataclass(frozen=True)
 class DetectedFace:
     bbox: tuple[int, int, int, int]
     score: float = 1.0
+    landmarks: tuple[float, ...] = (1.0,) * _LANDMARK_COUNT
 
 
 @dataclass

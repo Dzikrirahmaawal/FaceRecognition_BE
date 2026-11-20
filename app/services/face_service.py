@@ -213,11 +213,17 @@ def enroll(
                 }
             },
         )
+        matched_visitor_name = (
+            matched_profile.visitor.full_name if matched_profile and matched_profile.visitor else None
+        )
         raise ConflictError(
             "A very similar face profile already exists. Manual review is required.",
             error_code="FACE_DUPLICATE_DETECTED",
             details={
                 "review_required": True,
+                "matched_visitor_id": str(matched_profile.visitor_id) if matched_profile else None,
+                "matched_visitor_name": matched_visitor_name,
+                "similarity": round(float(highest_similarity), 4),
             },
         )
 
