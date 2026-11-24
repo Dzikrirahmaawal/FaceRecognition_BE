@@ -5,6 +5,7 @@ from app.api.v1.endpoints import (
     attendance,
     auth,
     employees,
+    events,
     face,
     kiosks,
     reports,
@@ -19,6 +20,7 @@ api_router.include_router(face.router)
 api_router.include_router(attendance.router)
 api_router.include_router(visits.router)
 api_router.include_router(employees.router)
+api_router.include_router(events.router)
 api_router.include_router(reports.router)
 api_router.include_router(kiosks.router)
 api_router.include_router(admin.router)

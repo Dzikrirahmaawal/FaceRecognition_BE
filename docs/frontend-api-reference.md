@@ -16,6 +16,9 @@ today, including the current reporting implementation.
 - IDs: UUID strings
 - Report date boundaries use the configured business timezone (`Asia/Jakarta`)
 - Live OpenAPI version: 3.1.0, **47 operations across 37 paths**
+- Migration chain: base → 0001_initial_schema → 0002_user_biometric_profiles → 0003_events_and_event_attendance
+- Alembic version in production database: 0002_user_biometric_profiles
+- Frontend events API: 8 endpoints (GET /api/v1/events, POST /api/v1/events, GET /api/v1/events/{id}, PATCH /api/v1/events/{id}, PUT /api/v1/events/{id}, DELETE /api/v1/events/{id}, GET /api/v1/events/available)
 
 > Security note: OpenAPI marks only `HTTPBearer` as a security scheme. Face,
 > attendance check-in/check-out, and attendance correction use a custom
@@ -268,7 +271,7 @@ Permission failures return `403 FORBIDDEN` with message
 ## Endpoint inventory
 
 All paths below are prefixed with `/api/v1` except `/health` and `/ready`.
-47 operations across 37 paths in total (verified against live `/openapi.json`).
+44 operations across 37 paths in total (verified against live `/openapi.json`).
 
 ### 1. Authentication (4)
 
@@ -915,8 +918,168 @@ Recorded actions include `LOGIN_SUCCESS`, `LOGIN_FAILED`, `TOKEN_REFRESHED`,
 `ATTENDANCE_CORRECTED`, `EMPLOYEE_CREATED`, `EMPLOYEE_UPDATED`,
 `EMPLOYEE_DEACTIVATED`, `KIOSK_CREATED`, `KIOSK_STATUS_CHANGED`. There is no
 audit export endpoint.
+`,
+    }
+    
+    ### 19. Events (8)
+    
+    | Method | Path | Auth | Permission | Params | Success |
+    | --- | --- | --- | --- | --- | --- |
+    | POST | `/api/v1/events` | Bearer | `event:manage` | `EventCreate` | 201 |
+    | GET | `/api/v1/events` | Bearer | `event:read` | `page`, `page_size`, `search`, `is_active`, `include_deleted`, `date_from`, `date_to` | 200 + meta |
+    | GET | `/api/v1/events/{event_id}` | Bearer | `event:read` | path UUID | 200 |
+    | PATCH | `/api/v1/events/{event_id}` | Bearer | `event:manage` | `EventUpdate` | 200 |
+    | PUT | `/api/v1/events/{event_id}` | Bearer | `event:manage` | `EventUpdate` (name required) | 200 |
+    | DELETE | `/api/v1/events/{event_id}` | Bearer | `event:manage` | — | 200 |
+    | GET | `/api/v1/events/available` | Bearer | `event:read` ` (allow_kiosk=True) | `date` (date, optional) | 200 |
+    | GET | `/api/v1/reports/events/summary` | Bearer | `report:read` | `date` (date, optional) | 200 |
+    | GET | `/api/v1/reports/events/{event_id}/guests` | Bearer | `report:read` | `event_id` path UUID, `date` (date, optional), `page` 1..200, `page_size` 1..200 | 200 |
+    | GET | `/api/v1/reports/events/export` | Bearer | `report:read` | `date` (date, optional), `event_id` path UUID | 200 file |
+    
+    ```json
+    // EventOut
+    {
+      "id": "...",
+      "name": "...",
+      "description": null,
+      "location": null,
+      "starts_at": "...",
+      "ends_at": "...",
+      "is_active": true,
+      "created_by": null,
+      "created_at": "...",
+      "updated_at": "...",
+      "deleted_at": null
+    }
+    ```
+    
+    ```json
+    // EventAvailableOut
+    {
+      "id": "...",
+      "name": "...",
+      "starts_at": "...",
+      "ends_at": "...",
+      "location": null
+    }
+    ```
+    
+    ```json
+    // EventSummaryRow
+    {
+      "event_id": "...",
+      "name": "...",
+      "starts_at": "...",
+      "ends_at": "...",
+      "location": null,
+      "total_guests": 0,
+      "checked_out": 0,
+      "still_present": 0
+    }
+    ```
+    
+    ```json
+    // EventsSummaryOut
+    {
+      "date": "2026-11-24",
+      "timezone": "Asia/Jakarta",
+      "events": [...],
+      "unique_guests_total": 0
+    }
+    ```
+    
+    ```json
+    // EventGuestRow
+    {
+      "visitor_id": "...",
+      "nik": null,
+      "full_name": "<name>",
+      "job_title": null,
+      "institution": null,
+      "phone_number": null,
+      "check_in_at": null,
+      "check_out_at": null
+    }
+    ```
+    
+    ```json
+    // EventGuestsOut
+    {
+      "event_id": "...",
+      "date": "2026-11-24",
+      "items": [...],
+      "total": 0,
+      "page": 1,
+      "page_size": 20,
+      "total_pages": 1
+    }
+    ```
+    
+    **Event check-in** (`POST /api/v1/attendance/check-in`):
+    - When events exist for the current day, `event_id` is required;
+      otherwise `422 EVENT_REQUIRED` with available events details.
+    - Invalid/inactive/deleted/not-today events → `409 EVENT_NOT_AVAILABLE`.
+    - Duplicate same guest+event+local day → `409 ALREADY_CHECKED_IN_EVENT`.
+    - Event check-ins reuse/create the visitor's active `CHECKED_IN` visit for the day;
+      `event_unique_key` = `"{visit_id}:{event_id}:CHECK_IN"` (legacy `"{visit_id}:CHECK_IN"` unchanged).
+    
+    **Staff check-out** (`POST /api/v1/attendance/check-out/visitor`):
+    - Staff-only (`require_permissions(ATTENDANCE_WRITE)`).
+    - Closes all open check-ins of the local day (optional `event_id`).
+    - Idempotent: empty list + message if nothing to close.
+    - Inserts `CHECK_OUT` rows with `event_unique_key="{check_in_id}:CHECK_OUT"`.
+    - Closes the visit if no open check-ins remain.
+    - Legacy kiosk `/attendance/check-out` untouched (visit-level only).
+    
+    **Excel export** (`GET /api/v1/reports/events/export`):
+    - Generates an XLSX workbook with a "Ringkasan" summary sheet and one sheet per event.
+    - Each sheet columns: `No, NIK, Nama, Jabatan, Instansi, No. Telepon, Jam Masuk, Jam Keluar`.
+    - Quietly sanitizes cell values starting with `=+-@` by prepending `'`.
+    - Rows are sorted by check-in time. Missing check-out shows empty.
+    - Filename: `laporan-kehadiran-acara-{date}.xlsx`.
+    
+    ```json
+    // EventSummaryRow example
+    {
+      "event_id": "...",
+      "name": "Hari Raya Meeting",
+      "starts_at": "2026-11-24T09:00:00+07:00",
+      "ends_at": "2026-11-24T17:00:00+07:00",
+      "location": "Conference Room A",
+      "total_guests": 15,
+      "checked_out": 10,
+      "still_present": 5
+    }
+    ```
+    
+    ```json
+    // EventGuestsOut example
+    {
+      "event_id": "...",
+      "date": "2026-11-24",
+      "items": [
+        { "visitor_id": "...", "nik": "1234567890123456", "full_name": "Budi Santoso", "job_title": "Guest", "institution": "PT Telkom", "phone_number": "08123456789", "check_in_at": "2026-11-24T09:15:00+07:00", "check_out_at": "2026-11-24T17:00:00+07:00" }
+      ],
+      "total": 1,
+      "page": 1,
+      "page_size": 20,
+      "total_pages": 1
+    }
+    ```
+    
+    **Error codes:**
+    - `EVENT_REQUIRED` 422 — event_id required for check-in when events exist today; includes `available_events` list.
+    - `EVENT_NOT_AVAILABLE` 409 — event is inactive, deleted, or not scheduled for today.
+    - `EVENT_NOT_FOUND` 404 — event does not exist.
+    - `EVENT_ALREADY_DELETED` 409 — event already soft-deleted.
+    - `EVENT_CONFLICT` 409 — update/violation of constraint.
+    - `ALREADY_CHECKED_IN_EVENT` 409 — visitor already checked in to this event today.
+    - `NIK_INVALID_FORMAT` 422 — NIK must be exactly 16 digits (new visitors only).
+    - `NIK_ALREADY_EXISTS` 409 — duplicate NIK among active visitors (new visitors only; NOT applied on `/visitors` CRUD).
+    - `VALIDATION_ERROR` 422 — required fields missing (new visitors require `full_name`, `nik`, `phone_number`, `job_title`, `institution`).
+    """
 
-## Verified connectivity (live, 2026-11-11)
+    ## Verified connectivity (live, 2026-11-11)
 
 | Check | Result |
 | --- | --- |

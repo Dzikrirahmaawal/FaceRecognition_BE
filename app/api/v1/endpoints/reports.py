@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, Query
@@ -14,6 +15,8 @@ from app.schemas.common import success_payload
 from app.schemas.report import (
     DailyReportOut,
     DashboardOut,
+    EventGuestsOut,
+    EventsSummaryOut,
     MonthlyReportOut,
     VisitorReportOut,
 )
@@ -73,6 +76,52 @@ def visitors(
     return success_payload(
         data=VisitorReportOut.model_validate(report).model_dump(mode="json"),
         message="Visitor report retrieved",
+    )
+
+
+@router.get("/events/summary")
+def events_summary(
+    day: date | None = Query(None, alias="date"),
+    _: User = Depends(require_permissions(Permission.REPORT_READ)),
+    db: Session = Depends(get_db),
+):
+    report = report_service.events_summary(db, day or report_service.local_today())
+    return success_payload(
+        data=EventsSummaryOut.model_validate(report).model_dump(mode="json"),
+        message="Per-event attendance summary retrieved",
+    )
+
+
+@router.get("/events/{event_id}/guests")
+def event_guests(
+    event_id: uuid.UUID,
+    day: date | None = Query(None, alias="date"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    _: User = Depends(require_permissions(Permission.REPORT_READ)),
+    db: Session = Depends(get_db),
+):
+    report = report_service.event_guests(db, event_id, day or report_service.local_today(), page, page_size)
+    return success_payload(
+        data=EventGuestsOut.model_validate(report).model_dump(mode="json"),
+        message="Event guests retrieved",
+    )
+
+
+@router.get("/events/export")
+def events_export(
+    day: date | None = Query(None, alias="date"),
+    event_id: uuid.UUID | None = Query(None),
+    _: User = Depends(require_permissions(Permission.REPORT_READ)),
+    db: Session = Depends(get_db),
+):
+    content, media_type, filename = report_service.export_events_excel(
+        db, day or report_service.local_today(), event_id
+    )
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

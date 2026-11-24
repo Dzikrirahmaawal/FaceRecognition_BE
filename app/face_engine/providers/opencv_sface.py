@@ -104,16 +104,19 @@ class OpenCvSfaceProvider(FaceRecognitionProvider):
             #   score normalized from index 14
             #   landmarks from indices 5-13 (9 values = up to 4.5 landmark pairs; we take min(5, available))
             if len(row) >= _DETECTOR_OUTPUT_DIM:
-                # bbox: indices 0-3
+                # bbox: indices 0-3 (already in original image pixel coords,
+                # since detector input_size matches original image size).
+                # raw_row is passed unchanged to alignCrop, which expects
+                # coords in the same space as the input image.
                 x_raw = float(row[0])
                 y_raw = float(row[1])
                 w_raw = float(row[2])
                 h_raw = float(row[3])
-                # scale bbox to original image size
-                x = max(0, min(x_raw * width, width - 1))
-                y = max(0, min(y_raw * height, height - 1))
-                w = max(1, min(w_raw * width, width - x))
-                h = max(1, min(h_raw * height, height - y))
+                # clamp to original image pixel coordinates
+                x = max(0, min(x_raw, width - 1))
+                y = max(0, min(y_raw, height - 1))
+                w = max(1, min(w_raw, width - x))
+                h = max(1, min(h_raw, height - y))
 
                 # score from index 14, normalized to 0-1 range (raw scores can be >1)
                 raw_score = float(row[14])
@@ -139,6 +142,7 @@ class OpenCvSfaceProvider(FaceRecognitionProvider):
                         bbox=(int(x), int(y), int(w), int(h)),
                         score=score,
                         landmarks=lm,
+                        raw_row=row,
                     )
                 )
             else:
@@ -149,7 +153,7 @@ class OpenCvSfaceProvider(FaceRecognitionProvider):
                 w = max(1, min(w, width - x))
                 h = max(1, min(h, height - y))
                 results.append(
-                    DetectedFace(bbox=(int(x), int(y), int(w), int(h)), score=score)
+                    DetectedFace(bbox=(int(x), int(y), int(w), int(h)), score=score, raw_row=row)
                 )
         return results
 
@@ -158,7 +162,7 @@ class OpenCvSfaceProvider(FaceRecognitionProvider):
 
     def generate_embedding(self, image: np.ndarray, face: DetectedFace) -> np.ndarray:
         with self._lock:
-            aligned = self._recognizer.alignCrop(image, self._face_box_row(face))
+            aligned = self._recognizer.alignCrop(image, face.raw_row)
             feature = self._recognizer.feature(aligned)
         embedding = np.asarray(feature, dtype=np.float32).reshape(-1)
         norm = float(np.linalg.norm(embedding))

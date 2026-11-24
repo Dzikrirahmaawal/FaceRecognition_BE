@@ -3,8 +3,8 @@ from __future__ import annotations
 from tests.helpers import enroll_visitor, make_face_image
 
 
-async def test_consent_records_are_listed(client, kiosk_headers, admin_headers):
-    enrolled = await enroll_visitor(client, kiosk_headers, seed=301)
+async def test_consent_records_are_listed(client, staff_headers, admin_headers):
+    enrolled = await enroll_visitor(client, staff_headers, seed=301)
     visitor_id = enrolled["visitor"]["id"]
     response = await client.get(f"/api/v1/visitors/{visitor_id}/consents", headers=admin_headers)
     assert response.status_code == 200
@@ -15,8 +15,8 @@ async def test_consent_records_are_listed(client, kiosk_headers, admin_headers):
     assert records[0]["policy_version"] == "1.0"
 
 
-async def test_withdrawal_is_audited_and_idempotent(client, kiosk_headers, admin_headers):
-    enrolled = await enroll_visitor(client, kiosk_headers, seed=302)
+async def test_withdrawal_is_audited_and_idempotent(client, staff_headers, admin_headers):
+    enrolled = await enroll_visitor(client, staff_headers, seed=302)
     visitor_id = enrolled["visitor"]["id"]
     first = await client.post(
         f"/api/v1/visitors/{visitor_id}/biometric/withdraw",
@@ -44,14 +44,14 @@ async def test_withdrawal_is_audited_and_idempotent(client, kiosk_headers, admin
 
     identify = await client.post(
         "/api/v1/face/identify",
-        headers=kiosk_headers,
+        headers=staff_headers,
         files={"image": ("face.png", make_face_image(302), "image/png")},
     )
     assert identify.json()["data"]["match_status"] == "UNKNOWN"
 
 
-async def test_biometric_deletion_clears_profiles_and_keeps_visitor(client, kiosk_headers, admin_headers):
-    enrolled = await enroll_visitor(client, kiosk_headers, seed=303)
+async def test_biometric_deletion_clears_profiles_and_keeps_visitor(client, staff_headers, admin_headers):
+    enrolled = await enroll_visitor(client, staff_headers, seed=303)
     visitor_id = enrolled["visitor"]["id"]
     response = await client.request(
         "DELETE",
@@ -69,14 +69,14 @@ async def test_biometric_deletion_clears_profiles_and_keeps_visitor(client, kios
 
     identify = await client.post(
         "/api/v1/face/identify",
-        headers=kiosk_headers,
+        headers=staff_headers,
         files={"image": ("face.png", make_face_image(303), "image/png")},
     )
     assert identify.json()["data"]["match_status"] == "UNKNOWN"
 
 
-async def test_privacy_endpoints_require_permission(client, viewer_headers, kiosk_headers):
-    enrolled = await enroll_visitor(client, kiosk_headers, seed=304)
+async def test_privacy_endpoints_require_permission(client, viewer_headers, staff_headers):
+    enrolled = await enroll_visitor(client, staff_headers, seed=304)
     visitor_id = enrolled["visitor"]["id"]
     consents = await client.get(f"/api/v1/visitors/{visitor_id}/consents", headers=viewer_headers)
     assert consents.status_code == 403

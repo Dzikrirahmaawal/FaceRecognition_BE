@@ -78,8 +78,8 @@ async def test_visit_lifecycle(client, admin_headers):
     assert again.json()["error_code"] == "VISIT_ALREADY_CANCELLED"
 
 
-async def test_cannot_cancel_checked_in_visit(client, admin_headers, kiosk_headers):
-    enrolled = await enroll_visitor(client, kiosk_headers, seed=201)
+async def test_cannot_cancel_checked_in_visit(client, admin_headers, staff_headers):
+    enrolled = await enroll_visitor(client, staff_headers, seed=201)
     visitor_id = enrolled["visitor"]["id"]
     visit = await client.post(
         "/api/v1/visits", headers=admin_headers, json={"visitor_id": visitor_id}
@@ -87,7 +87,7 @@ async def test_cannot_cancel_checked_in_visit(client, admin_headers, kiosk_heade
     visit_id = visit.json()["data"]["id"]
     check_in = await client.post(
         "/api/v1/attendance/check-in",
-        headers=kiosk_headers,
+        headers=staff_headers,
         json={"visitor_id": visitor_id, "visit_id": visit_id, "method": "FACE"},
     )
     assert check_in.status_code == 201
@@ -100,7 +100,7 @@ async def test_cannot_cancel_checked_in_visit(client, admin_headers, kiosk_heade
 
     await client.post(
         "/api/v1/attendance/check-out",
-        headers=kiosk_headers,
+        headers=staff_headers,
         json={"visitor_id": visitor_id, "visit_id": visit_id, "method": "FACE"},
     )
     after_checkout = await client.post(

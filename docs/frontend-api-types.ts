@@ -50,6 +50,80 @@ export type ReportType = "daily" | "monthly" | "visitors";
 export type ReportFormat = "csv" | "xlsx";
 
 /**
+ * Event types.
+ */
+export type EventStatus = "active" | "inactive" | "deleted";
+
+export type EventCreate = {
+  name: string;
+  description?: string;
+  location?: string;
+  starts_at: string;
+  ends_at: string;
+};
+
+export type EventOut = {
+  id: string;
+  name: string;
+  description?: string;
+  location?: string;
+  starts_at: string;
+  ends_at: string;
+  is_active: boolean;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string;
+};
+
+export type EventAvailableOut = EventOut;
+
+/**
+ * Summary row for per-event attendance.
+ */
+export type EventSummaryRow = {
+  event_id: string;
+  name: string;
+  starts_at: string;
+  ends_at: string;
+  location?: string;
+  total_guests: number;
+  checked_out: number;
+  still_present: number;
+};
+
+/** Overall summary for a day across all events. */
+export type EventsSummaryOut = {
+  date: string;
+  timezone: string;
+  events: EventSummaryRow[];
+  unique_guests_total: number;
+};
+
+/** Row for a single event's guests. */
+export type EventGuestRow = {
+  visitor_id: string;
+  nik?: string;
+  full_name: string;
+  job_title?: string;
+  institution?: string;
+  phone_number?: string;
+  check_in_at?: string;
+  check_out_at?: string;
+};
+
+/** Paginated list of event guests. */
+export type EventGuestsOut = {
+  event_id: string;
+  date: string;
+  items: EventGuestRow[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+};
+
+/**
  * Error codes currently emitted by the backend. Grouped by the HTTP status the
  * backend uses; some codes can appear with more than one status (noted).
  */

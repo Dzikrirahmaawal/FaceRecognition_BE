@@ -32,19 +32,24 @@ def make_black_image(size: int = 240) -> bytes:
 
 async def enroll_visitor(
     client: httpx.AsyncClient,
-    kiosk_headers: dict,
+    staff_headers: dict,
     *,
     full_name: str = "Test Visitor",
+    nik: str = "1234567890123456",
+    job_title: str = "Guest",
+    institution: str = "Test Company",
     seed: int = 1,
     image: bytes | None = None,
 ) -> dict:
     response = await client.post(
         "/api/v1/face/enroll",
-        headers=kiosk_headers,
+        headers=staff_headers,
         files={"image": ("face.png", image or make_face_image(seed), "image/png")},
         data={
             "full_name": full_name,
-            "company_name": "Test Company",
+            "nik": nik,
+            "job_title": job_title,
+            "institution": institution,
             "phone_number": "08123456789",
             "consent_granted": "true",
             "consent_policy_version": "1.0",

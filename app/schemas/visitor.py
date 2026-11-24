@@ -14,6 +14,7 @@ class VisitorCreate(BaseModel):
     company_name: str | None = Field(default=None, max_length=150)
     phone_number: str | None = Field(default=None, max_length=30)
     email: EmailStr | None = None
+    job_title: str | None = Field(default=None, max_length=150)
 
 
 class VisitorUpdate(BaseModel):
@@ -22,6 +23,7 @@ class VisitorUpdate(BaseModel):
     company_name: str | None = Field(default=None, max_length=150)
     phone_number: str | None = Field(default=None, max_length=30)
     email: EmailStr | None = None
+    job_title: str | None = Field(default=None, max_length=150)
     is_active: bool | None = None
 
 
@@ -40,6 +42,7 @@ class VisitorOut(ORMModel):
     company_name: str | None = None
     phone_number: str | None = None
     email: EmailStr | None = None
+    job_title: str | None = None
     is_active: bool
     has_active_face_profile: bool = False
     created_at: datetime

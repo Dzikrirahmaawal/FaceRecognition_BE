@@ -7,16 +7,20 @@ from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
 from sqlalchemy import false, func, or_, select, true
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.core.config import settings
+from app.core.exceptions import NotFoundError
 from app.core.types import ensure_utc, utcnow
 from app.models.attendance import AttendanceLog
 from app.models.enums import AttendanceEventType, VisitStatus
+from app.models.event import Event
 from app.models.kiosk import Kiosk
 from app.models.visit import Visit
 from app.models.visitor import Visitor
+from app.repositories import events as events_repo
 
 
 def _tz() -> ZoneInfo:
@@ -254,6 +258,296 @@ def export_report(
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             f"{filename}.xlsx",
         )
+    else:
+        # CSV format
+        import csv
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(headers)
+        for row in rows:
+            writer.writerow(row)
+        csv_bytes = output.getvalue().encode("utf-8")
+        return (csv_bytes, "text/csv", f"{filename}.csv")
+
+
+def events_summary(db: Session, day: date) -> dict:
+    events = events_repo.get_available_today(db, day)
+    start, end = day_bounds(day)
+    all_attended: set[uuid.UUID] = set()
+    rows: list[dict] = []
+    for event in events:
+        attended = set(
+            db.scalars(
+                select(AttendanceLog.visitor_id)
+                .where(
+                    AttendanceLog.event_id == event.id,
+                    AttendanceLog.event_type == AttendanceEventType.CHECK_IN,
+                    AttendanceLog.is_correction == false(),
+                    AttendanceLog.event_timestamp >= start,
+                    AttendanceLog.event_timestamp < end,
+                )
+                .distinct()
+            )
+        )
+        checked_out = attended & set(
+            db.scalars(
+                select(AttendanceLog.visitor_id)
+                .where(
+                    AttendanceLog.event_id == event.id,
+                    AttendanceLog.event_type == AttendanceEventType.CHECK_OUT,
+                    AttendanceLog.is_correction == false(),
+                    AttendanceLog.event_timestamp >= start,
+                    AttendanceLog.event_timestamp < end,
+                )
+                .distinct()
+            )
+        )
+        rows.append(
+            {
+                "event_id": event.id,
+                "name": event.name,
+                "starts_at": event.starts_at,
+                "ends_at": event.ends_at,
+                "location": event.location,
+                "total_guests": len(attended),
+                "checked_out": len(checked_out),
+                "still_present": len(attended) - len(checked_out),
+            }
+        )
+        all_attended |= attended
+    return {
+        "date": day,
+        "timezone": settings.TIMEZONE,
+        "events": rows,
+        "unique_guests_total": len(all_attended),
+    }
+
+
+def event_guests(
+    db: Session,
+    event_id: uuid.UUID,
+    day: date,
+    page: int,
+    page_size: int,
+) -> dict:
+    event = events_repo.get(db, event_id)
+    if event is None:
+        raise NotFoundError("Event not found", error_code="EVENT_NOT_FOUND")
+    start, end = day_bounds(day)
+    base = (
+        select(AttendanceLog, Visitor)
+        .join(Visitor, AttendanceLog.visitor_id == Visitor.id)
+        .where(
+            AttendanceLog.event_id == event_id,
+            AttendanceLog.event_type == AttendanceEventType.CHECK_IN,
+            AttendanceLog.is_correction == false(),
+            AttendanceLog.event_timestamp >= start,
+            AttendanceLog.event_timestamp < end,
+        )
+    )
+    total = _count(db, select(func.count()).select_from(base.subquery()))
+    rows = list(
+        db.execute(
+            base.order_by(AttendanceLog.event_timestamp.asc())
+            .offset((max(1, page) - 1) * max(1, min(page_size, 200)))
+            .limit(max(1, min(page_size, 200)))
+        ).all()
+    )
+    checkout_rows = list(
+        db.execute(
+            select(AttendanceLog.visitor_id, func.max(AttendanceLog.event_timestamp))
+            .where(
+                AttendanceLog.event_id == event_id,
+                AttendanceLog.event_type == AttendanceEventType.CHECK_OUT,
+                AttendanceLog.is_correction == false(),
+                AttendanceLog.event_timestamp >= start,
+                AttendanceLog.event_timestamp < end,
+            )
+            .group_by(AttendanceLog.visitor_id)
+        ).all()
+    )
+    checkout_by_visitor = {visitor_id: ts for visitor_id, ts in checkout_rows}
+    items = [
+        {
+            "visitor_id": visitor.id,
+            "nik": visitor.identity_number,
+            "full_name": visitor.full_name,
+            "job_title": visitor.job_title,
+            "institution": visitor.company_name,
+            "phone_number": visitor.phone_number,
+            "check_in_at": log.event_timestamp,
+            "check_out_at": checkout_by_visitor.get(visitor.id),
+        }
+        for log, visitor in rows
+    ]
+    page = max(1, page)
+    page_size = max(1, min(page_size, 200))
+    return {
+        "event_id": event_id,
+        "date": day,
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size,
+    }
+
+
+def event_guests_all(db: Session, event_id: uuid.UUID, day: date) -> list[dict]:
+    start, end = day_bounds(day)
+    rows = list(
+        db.execute(
+            select(AttendanceLog, Visitor)
+            .join(Visitor, AttendanceLog.visitor_id == Visitor.id)
+            .where(
+                AttendanceLog.event_id == event_id,
+                AttendanceLog.event_type == AttendanceEventType.CHECK_IN,
+                AttendanceLog.is_correction == false(),
+                AttendanceLog.event_timestamp >= start,
+                AttendanceLog.event_timestamp < end,
+            )
+            .order_by(AttendanceLog.event_timestamp.asc())
+        ).all()
+    )
+    checkout_rows = list(
+        db.execute(
+            select(AttendanceLog.visitor_id, func.max(AttendanceLog.event_timestamp))
+            .where(
+                AttendanceLog.event_id == event_id,
+                AttendanceLog.event_type == AttendanceEventType.CHECK_OUT,
+                AttendanceLog.is_correction == false(),
+                AttendanceLog.event_timestamp >= start,
+                AttendanceLog.event_timestamp < end,
+            )
+            .group_by(AttendanceLog.visitor_id)
+        ).all()
+    )
+    checkout_by_visitor = {visitor_id: ts for visitor_id, ts in checkout_rows}
+    return [
+        {
+            "visitor_id": visitor.id,
+            "nik": visitor.identity_number,
+            "full_name": visitor.full_name,
+            "job_title": visitor.job_title,
+            "institution": visitor.company_name,
+            "phone_number": visitor.phone_number,
+            "check_in_at": log.event_timestamp,
+            "check_out_at": checkout_by_visitor.get(visitor.id),
+        }
+        for log, visitor in rows
+    ]
+
+
+def _sanitize_sheet_name(name: str, taken: set[str]) -> str:
+    invalid = set("\\/?*[]:")
+    safe = "".join("_" if ch in invalid else ch for ch in name).strip().strip("'")
+    if not safe:
+        safe = "Event"
+    safe = safe[:31]
+    candidate = safe
+    n = 1
+    while candidate in taken:
+        suffix = f" ({n})"
+        if len(suffix) >= 31:
+            candidate = f"E{n}"
+        else:
+            candidate = safe[: 31 - len(suffix)] + suffix
+        n += 1
+    taken.add(candidate)
+    return candidate
+
+
+def _guard_cell(value: str) -> str:
+    if isinstance(value, str) and value and value[0] in "=+-@":
+        return "'" + value
+    return value
+
+
+def export_events_excel(db: Session, day: date, event_id: uuid.UUID | None) -> tuple[bytes, str, str]:
+    start, end = day_bounds(day)
+    events = events_repo.get_available_today(db, day)
+    if event_id is not None:
+        events = [e for e in events if e.id == event_id]
+        if not events:
+            raise NotFoundError("Event not found", error_code="EVENT_NOT_FOUND")
+
+    workbook = Workbook()
+    summary = workbook.active
+    summary.title = "Ringkasan"
+    summary.append(["Nama Acara", "Waktu", "Ruangan", "Total Tamu", "Sudah Keluar"])
+    all_attended: set[uuid.UUID] = set()
+    event_stats: list[tuple[Event, int, int, str]] = []
+    for event in events:
+        attended = set(
+            db.scalars(
+                select(AttendanceLog.visitor_id)
+                .where(
+                    AttendanceLog.event_id == event.id,
+                    AttendanceLog.event_type == AttendanceEventType.CHECK_IN,
+                    AttendanceLog.is_correction == false(),
+                    AttendanceLog.event_timestamp >= start,
+                    AttendanceLog.event_timestamp < end,
+                )
+                .distinct()
+            )
+        )
+        checked_out = attended & set(
+            db.scalars(
+                select(AttendanceLog.visitor_id)
+                .where(
+                    AttendanceLog.event_id == event.id,
+                    AttendanceLog.event_type == AttendanceEventType.CHECK_OUT,
+                    AttendanceLog.is_correction == false(),
+                    AttendanceLog.event_timestamp >= start,
+                    AttendanceLog.event_timestamp < end,
+                )
+                .distinct()
+            )
+        )
+        all_attended |= attended
+        time_str = (
+            f"{_to_local(event.starts_at).strftime('%H:%M')} - "
+            f"{_to_local(event.ends_at).strftime('%H:%M')} WIB"
+        )
+        event_stats.append((event, len(attended), len(checked_out), time_str))
+
+    for event, total, checked_out, time_str in event_stats:
+        summary.append([event.name, time_str, event.location or "", total, checked_out])
+    summary.append([])
+    summary.append(["Total tamu unik (seluruh acara)", "", "", len(all_attended), ""])
+
+    taken = {"Ringkasan"}
+    for event, _total, _checked_out, _time_str in event_stats:
+        guests = event_guests_all(db, event.id, day)
+        sheet = workbook.create_sheet(_sanitize_sheet_name(event.name, taken))
+        sheet.append(
+            ["No", "NIK", "Nama", "Jabatan", "Instansi", "No. Telepon", "Jam Masuk", "Jam Keluar"]
+        )
+        for index, guest in enumerate(guests, start=1):
+            check_in_at = guest["check_in_at"]
+            check_out_at = guest["check_out_at"]
+            sheet.append(
+                [
+                    index,
+                    _guard_cell(guest["nik"] or ""),
+                    _guard_cell(guest["full_name"]),
+                    _guard_cell(guest["job_title"] or ""),
+                    _guard_cell(guest["institution"] or ""),
+                    _guard_cell(guest["phone_number"] or ""),
+                    (check_in_at.strftime("%H:%M") + " WIB") if check_in_at else "",
+                    (check_out_at.strftime("%H:%M") + " WIB") if check_out_at else "",
+                ]
+            )
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    suffix = f"-{event_id}" if event_id is not None else ""
+    filename = f"laporan-kehadiran-acara-{day.isoformat()}{suffix}.xlsx"
+    return (
+        buffer.getvalue(),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename,
+    )
 
     buffer = io.StringIO()
     writer = csv.writer(buffer)

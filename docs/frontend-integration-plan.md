@@ -5,7 +5,7 @@ Scope: what a Vue.js (or any SPA) frontend can consume today, in what order,
 and what is missing. No backend or database changes are proposed here.
 
 Regenerated on 2026-11-11 from the current backend source and live OpenAPI
-(47 operations / 37 paths). Supersedes earlier revisions.
+(47 operations / 37 paths). Migration chain: base → 0001_initial_schema → 0002_user_biometric_profiles → 0003_events_and_event_attendance. Supersedes earlier revisions.
 
 ## Readiness summary
 
@@ -132,6 +132,37 @@ Corrections are append-only records (`is_correction: true`, `correction_of_id`)
 and cannot change the event type (`422 UNSUPPORTED_CORRECTION`) or correct a
 correction (`409 INVALID_CORRECTION_TARGET`). Show both original and correction
 rows. `confidence_score` is a string in this list view.
+
+### Events management
+
+| Need | Endpoint | Auth |
+| --- | --- | --- |
+| Create event | `POST /api/v1/events` | Staff JWT, `event:manage` |
+| List events | `GET /api/v1/events?page=&page_size=&search=&is_active=&include_deleted=` | Staff JWT, `event:read` |
+| Get event | `GET /api/v1/events/{event_id}` | Staff JWT, `event:read` |
+| Update event | `PATCH /api/v1/events/{event_id}` | Staff JWT, `event:manage` |
+| Check-in to event | `POST /api/v1/attendance/check-in` with `method: "MANUAL"` or `method: "FACE"` | Staff JWT, `attendance:write`; or kiosk token |
+| Available events today | `GET /api/v1/events/available` | Any auth (`allow_kiosk=True`) |
+| Staff check-out by visitor | `POST /api/v1/attendance/check-out/visitor` | Staff JWT, `attendance:write` |
+| Per-event attendance summary | `GET /api/v1/reports/events/summary` | `report:read` |
+| Event guests list | `GET /api/v1/reports/events/{event_id}/guests` | `report:read` |
+| Event guests (all) | `GET /api/v1/reports/events/{event_id}/guests` (no pagination) | `report:read` |
+| Export event attendance Excel | `GET /api/v1/reports/events/export` | `report:read` |
+
+Excel export generates a workbook with a "Ringkasan" summary sheet and one sheet per event.
+Each sheet columns: `No, NIK, Nama, Jabatan, Instansi, No. Telepon, Jam Masuk, Jam Keluar`.
+Quietly sanitizes cell values starting with `=+-@` by prepending `'`.
+Rows sorted by check-in time. Missing check-out shows empty.
+Filenames: `laporan-kehadiran-acara-{date}.xlsx`.
+
+Handle `EVENT_REQUIRED` 422 (event_id required when events exist today, with available events list),
+`EVENT_NOT_AVAILABLE` 409 (event inactive/deleted/not-today), and
+`ALREADY_CHECKED_IN_EVENT` 409 (duplicate same guest+event+local day).
+
+Face check-in to events follows the same flow as face check-in to attendance, but
+requires `event_id` when events are active today. New visitors require `full_name`,
+`nik`, `phone_number`, `job_title`, `institution`; NIK `^\d{16}$` format validation
+applies; duplicate NIK among active visitors → `409 NIK_ALREADY_EXISTS`.
 
 ### Face recognition kiosk workflow
 

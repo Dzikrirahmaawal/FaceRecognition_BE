@@ -8,14 +8,14 @@ from tests.helpers import (
 )
 
 
-async def test_enroll_identify_and_verify(client, kiosk_headers):
-    enrolled = await enroll_visitor(client, kiosk_headers, full_name="Budi Santoso", seed=7)
+async def test_enroll_identify_and_verify(client, staff_headers):
+    enrolled = await enroll_visitor(client, staff_headers, full_name="Budi Santoso", seed=7)
     assert enrolled["visitor"]["full_name"] == "Budi Santoso"
     assert "embedding_data" not in str(enrolled).lower()
 
     identified = await client.post(
         "/api/v1/face/identify",
-        headers=kiosk_headers,
+        headers=staff_headers,
         files={"image": ("face.png", make_face_image(7), "image/png")},
     )
     assert identified.status_code == 200, identified.text
@@ -26,7 +26,7 @@ async def test_enroll_identify_and_verify(client, kiosk_headers):
 
     verified = await client.post(
         "/api/v1/face/verify",
-        headers=kiosk_headers,
+        headers=staff_headers,
         files={"image": ("face.png", make_face_image(7), "image/png")},
         data={"visitor_id": enrolled["visitor"]["id"]},
     )
@@ -34,22 +34,22 @@ async def test_enroll_identify_and_verify(client, kiosk_headers):
     assert verified.json()["data"]["matched"] is True
 
 
-async def test_identify_unknown_face(client, kiosk_headers):
-    await enroll_visitor(client, kiosk_headers, seed=10)
+async def test_identify_unknown_face(client, staff_headers):
+    await enroll_visitor(client, staff_headers, seed=10)
     response = await client.post(
         "/api/v1/face/identify",
-        headers=kiosk_headers,
+        headers=staff_headers,
         files={"image": ("face.png", make_face_image(12345), "image/png")},
     )
     assert response.status_code == 200
     assert response.json()["data"]["match_status"] == "UNKNOWN"
 
 
-async def test_duplicate_face_enrollment_rejected(client, kiosk_headers):
-    first = await enroll_visitor(client, kiosk_headers, full_name="First Person", seed=42)
+async def test_duplicate_face_enrollment_rejected(client, staff_headers):
+    first = await enroll_visitor(client, staff_headers, full_name="First Person", seed=42)
     second = await client.post(
         "/api/v1/face/enroll",
-        headers=kiosk_headers,
+        headers=staff_headers,
         files={"image": ("face.png", make_face_image(42), "image/png")},
         data={
             "full_name": "Second Person",
@@ -62,10 +62,10 @@ async def test_duplicate_face_enrollment_rejected(client, kiosk_headers):
     assert second.json()["details"]["review_required"] is True
 
 
-async def test_no_face_and_multiple_faces(client, kiosk_headers):
+async def test_no_face_and_multiple_faces(client, staff_headers):
     no_face = await client.post(
         "/api/v1/face/enroll",
-        headers=kiosk_headers,
+        headers=staff_headers,
         files={"image": ("face.png", make_black_image(), "image/png")},
         data={"full_name": "No Face", "consent_granted": "true", "consent_policy_version": "1.0"},
     )
@@ -74,7 +74,7 @@ async def test_no_face_and_multiple_faces(client, kiosk_headers):
 
     multi = await client.post(
         "/api/v1/face/enroll",
-        headers=kiosk_headers,
+        headers=staff_headers,
         files={"image": ("face.png", make_multi_face_image(), "image/png")},
         data={"full_name": "Two Faces", "consent_granted": "true", "consent_policy_version": "1.0"},
     )
@@ -82,10 +82,10 @@ async def test_no_face_and_multiple_faces(client, kiosk_headers):
     assert multi.json()["error_code"] == "MULTIPLE_FACES_DETECTED"
 
 
-async def test_enrollment_requires_consent(client, kiosk_headers):
+async def test_enrollment_requires_consent(client, staff_headers):
     response = await client.post(
         "/api/v1/face/enroll",
-        headers=kiosk_headers,
+        headers=staff_headers,
         files={"image": ("face.png", make_face_image(5), "image/png")},
         data={"full_name": "No Consent", "consent_granted": "false"},
     )
@@ -93,10 +93,10 @@ async def test_enrollment_requires_consent(client, kiosk_headers):
     assert response.json()["error_code"] == "CONSENT_REQUIRED"
 
 
-async def test_invalid_image_format(client, kiosk_headers):
+async def test_invalid_image_format(client, staff_headers):
     response = await client.post(
         "/api/v1/face/enroll",
-        headers=kiosk_headers,
+        headers=staff_headers,
         files={"image": ("face.txt", b"not-an-image", "text/plain")},
         data={"full_name": "Bad Image", "consent_granted": "true"},
     )
@@ -104,20 +104,20 @@ async def test_invalid_image_format(client, kiosk_headers):
     assert response.json()["error_code"] in {"INVALID_IMAGE_FORMAT", "INVALID_IMAGE"}
 
 
-async def test_liveness_endpoint(client, kiosk_headers):
+async def test_liveness_endpoint(client, staff_headers):
     response = await client.post(
         "/api/v1/face/liveness",
-        headers=kiosk_headers,
+        headers=staff_headers,
         files={"image": ("face.png", make_face_image(8), "image/png")},
     )
     assert response.status_code == 200
     assert response.json()["data"]["passed"] is True
 
 
-async def test_delete_face_profile_removes_biometric_data(client, kiosk_headers, admin_headers, db):
+async def test_delete_face_profile_removes_biometric_data(client, staff_headers, admin_headers, db):
     from app.models import FaceProfile
 
-    enrolled = await enroll_visitor(client, kiosk_headers, seed=77)
+    enrolled = await enroll_visitor(client, staff_headers, seed=77)
     profile_id = enrolled["profile_id"]
     response = await client.delete(
         f"/api/v1/face/profiles/{profile_id}?delete_biometrics=true&reason=GDPR%20request",

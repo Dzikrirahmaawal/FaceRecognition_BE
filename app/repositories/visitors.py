@@ -19,6 +19,12 @@ def get_by_code(db: Session, code: str) -> Visitor | None:
     return db.scalars(select(Visitor).where(Visitor.visitor_code == code)).first()
 
 
+def get_by_identity_number(db: Session, identity_number: str) -> Visitor | None:
+    return db.scalars(
+        select(Visitor).where(Visitor.identity_number == identity_number)
+    ).first()
+
+
 def list_visitors(
     db: Session,
     page: int,

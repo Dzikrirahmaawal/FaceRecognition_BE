@@ -23,6 +23,8 @@ class Permission(str, enum.Enum):
     VISIT_WRITE = "visit:write"
     EMPLOYEE_READ = "employee:read"
     EMPLOYEE_WRITE = "employee:write"
+    EVENT_READ = "event:read"
+    EVENT_MANAGE = "event:manage"
     REPORT_READ = "report:read"
     AUDIT_READ = "audit:read"
     PRIVACY_MANAGE = "privacy:manage"
@@ -48,6 +50,8 @@ ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {
             Permission.VISIT_WRITE,
             Permission.EMPLOYEE_READ,
             Permission.EMPLOYEE_WRITE,
+            Permission.EVENT_READ,
+            Permission.EVENT_MANAGE,
             Permission.REPORT_READ,
             Permission.AUDIT_READ,
             Permission.KIOSK_READ,
@@ -66,6 +70,7 @@ ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {
             Permission.VISIT_READ,
             Permission.VISIT_WRITE,
             Permission.EMPLOYEE_READ,
+            Permission.EVENT_READ,
             Permission.KIOSK_READ,
         }
     ),
@@ -77,6 +82,7 @@ ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {
             Permission.ATTENDANCE_READ,
             Permission.ATTENDANCE_WRITE,
             Permission.VISIT_READ,
+            Permission.EVENT_READ,
             Permission.KIOSK_READ,
         }
     ),
@@ -85,6 +91,7 @@ ROLE_PERMISSIONS: dict[UserRole, frozenset[Permission]] = {
             Permission.VISITOR_READ,
             Permission.ATTENDANCE_READ,
             Permission.VISIT_READ,
+            Permission.EVENT_READ,
             Permission.REPORT_READ,
         }
     ),

@@ -13,13 +13,13 @@ async def _manual_visitor(client, admin_headers) -> dict:
     return response.json()["data"]
 
 
-async def test_check_in_check_out_and_duplicates(client, kiosk_headers):
-    enrolled = await enroll_visitor(client, kiosk_headers, seed=21)
+async def test_check_in_check_out_and_duplicates(client, staff_headers):
+    enrolled = await enroll_visitor(client, staff_headers, seed=21)
     visitor_id = enrolled["visitor"]["id"]
 
     check_in = await client.post(
         "/api/v1/attendance/check-in",
-        headers=kiosk_headers,
+        headers=staff_headers,
         json={"visitor_id": visitor_id, "method": "FACE", "confidence_score": 0.93},
     )
     assert check_in.status_code == 201, check_in.text
@@ -29,7 +29,7 @@ async def test_check_in_check_out_and_duplicates(client, kiosk_headers):
 
     duplicate_in = await client.post(
         "/api/v1/attendance/check-in",
-        headers=kiosk_headers,
+        headers=staff_headers,
         json={"visitor_id": visitor_id, "method": "FACE"},
     )
     assert duplicate_in.status_code == 409
@@ -37,7 +37,7 @@ async def test_check_in_check_out_and_duplicates(client, kiosk_headers):
 
     check_out = await client.post(
         "/api/v1/attendance/check-out",
-        headers=kiosk_headers,
+        headers=staff_headers,
         json={"visitor_id": visitor_id, "method": "FACE"},
     )
     assert check_out.status_code == 200, check_out.text
@@ -46,44 +46,44 @@ async def test_check_in_check_out_and_duplicates(client, kiosk_headers):
 
     duplicate_out = await client.post(
         "/api/v1/attendance/check-out",
-        headers=kiosk_headers,
+        headers=staff_headers,
         json={"visitor_id": visitor_id, "method": "FACE"},
     )
     assert duplicate_out.status_code == 409
     assert duplicate_out.json()["error_code"] == "NO_ACTIVE_VISIT"
 
 
-async def test_manual_non_biometric_fallback(client, admin_headers, kiosk_headers):
+async def test_manual_non_biometric_fallback(client, admin_headers, staff_headers):
     visitor = await _manual_visitor(client, admin_headers)
     response = await client.post(
         "/api/v1/attendance/check-in",
-        headers=kiosk_headers,
+        headers=staff_headers,
         json={"visitor_id": visitor["id"], "method": "MANUAL"},
     )
     assert response.status_code == 201
     checkout = await client.post(
         "/api/v1/attendance/check-out",
-        headers=kiosk_headers,
+        headers=staff_headers,
         json={"visitor_id": visitor["id"], "method": "MANUAL"},
     )
     assert checkout.status_code == 200
 
 
-async def test_check_in_without_active_visit_for_checkout(client, kiosk_headers, admin_headers):
+async def test_check_in_without_active_visit_for_checkout(client, staff_headers, admin_headers):
     visitor = await _manual_visitor(client, admin_headers)
     response = await client.post(
         "/api/v1/attendance/check-out",
-        headers=kiosk_headers,
+        headers=staff_headers,
         json={"visitor_id": visitor["id"], "method": "MANUAL"},
     )
     assert response.status_code == 409
     assert response.json()["error_code"] == "NO_ACTIVE_VISIT"
 
 
-async def test_idempotent_check_in_and_check_out(client, kiosk_headers):
-    enrolled = await enroll_visitor(client, kiosk_headers, seed=33)
+async def test_idempotent_check_in_and_check_out(client, staff_headers):
+    enrolled = await enroll_visitor(client, staff_headers, seed=33)
     visitor_id = enrolled["visitor"]["id"]
-    headers = {**kiosk_headers, "Idempotency-Key": "checkin-key-001"}
+    headers = {**staff_headers, "Idempotency-Key": "checkin-key-001"}
     body = {"visitor_id": visitor_id, "method": "FACE"}
 
     first = await client.post("/api/v1/attendance/check-in", headers=headers, json=body)
@@ -92,7 +92,7 @@ async def test_idempotent_check_in_and_check_out(client, kiosk_headers):
     assert second.status_code == 201
     assert first.json()["data"]["attendance_id"] == second.json()["data"]["attendance_id"]
 
-    checkout_headers = {**kiosk_headers, "Idempotency-Key": "checkout-key-001"}
+    checkout_headers = {**staff_headers, "Idempotency-Key": "checkout-key-001"}
     out_first = await client.post("/api/v1/attendance/check-out", headers=checkout_headers, json=body)
     out_second = await client.post("/api/v1/attendance/check-out", headers=checkout_headers, json=body)
     assert out_first.status_code == 200
@@ -101,15 +101,15 @@ async def test_idempotent_check_in_and_check_out(client, kiosk_headers):
 
     conflict = await client.post(
         "/api/v1/attendance/check-in",
-        headers={**kiosk_headers, "Idempotency-Key": "checkin-key-001"},
+        headers={**staff_headers, "Idempotency-Key": "checkin-key-001"},
         json={"visitor_id": visitor_id, "method": "MANUAL"},
     )
     assert conflict.status_code == 409
     assert conflict.json()["error_code"] == "IDEMPOTENCY_KEY_REUSED"
 
 
-async def test_consent_withdrawal_blocks_biometric_attendance(client, kiosk_headers, admin_headers):
-    enrolled = await enroll_visitor(client, kiosk_headers, seed=55)
+async def test_consent_withdrawal_blocks_biometric_attendance(client, staff_headers, admin_headers):
+    enrolled = await enroll_visitor(client, staff_headers, seed=55)
     visitor_id = enrolled["visitor"]["id"]
 
     withdraw = await client.post(
@@ -121,7 +121,7 @@ async def test_consent_withdrawal_blocks_biometric_attendance(client, kiosk_head
 
     identify = await client.post(
         "/api/v1/face/identify",
-        headers=kiosk_headers,
+        headers=staff_headers,
         files={"image": ("face.png", make_face_image(55), "image/png")},
     )
     assert identify.status_code == 200
@@ -129,7 +129,7 @@ async def test_consent_withdrawal_blocks_biometric_attendance(client, kiosk_head
 
     blocked = await client.post(
         "/api/v1/attendance/check-in",
-        headers=kiosk_headers,
+        headers=staff_headers,
         json={"visitor_id": visitor_id, "method": "FACE"},
     )
     assert blocked.status_code == 403
@@ -137,18 +137,18 @@ async def test_consent_withdrawal_blocks_biometric_attendance(client, kiosk_head
 
     manual = await client.post(
         "/api/v1/attendance/check-in",
-        headers=kiosk_headers,
+        headers=staff_headers,
         json={"visitor_id": visitor_id, "method": "MANUAL"},
     )
     assert manual.status_code == 201
 
 
-async def test_biometric_deletion_retains_attendance_history(client, kiosk_headers, admin_headers):
-    enrolled = await enroll_visitor(client, kiosk_headers, seed=61)
+async def test_biometric_deletion_retains_attendance_history(client, staff_headers, admin_headers):
+    enrolled = await enroll_visitor(client, staff_headers, seed=61)
     visitor_id = enrolled["visitor"]["id"]
     await client.post(
         "/api/v1/attendance/check-in",
-        headers=kiosk_headers,
+        headers=staff_headers,
         json={"visitor_id": visitor_id, "method": "FACE"},
     )
     deleted = await client.request(
@@ -179,12 +179,12 @@ async def test_unknown_visitor_and_unauthorized_kiosk(client, admin_headers):
     assert unauthorized.status_code == 401
 
 
-async def test_attendance_correction_is_append_only(client, kiosk_headers, admin_headers):
-    enrolled = await enroll_visitor(client, kiosk_headers, seed=71)
+async def test_attendance_correction_is_append_only(client, staff_headers, admin_headers):
+    enrolled = await enroll_visitor(client, staff_headers, seed=71)
     visitor_id = enrolled["visitor"]["id"]
     check_in = await client.post(
         "/api/v1/attendance/check-in",
-        headers=kiosk_headers,
+        headers=staff_headers,
         json={"visitor_id": visitor_id, "method": "FACE"},
     )
     attendance_id = check_in.json()["data"]["attendance_id"]
