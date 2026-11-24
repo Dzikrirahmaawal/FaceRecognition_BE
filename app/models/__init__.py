@@ -12,6 +12,7 @@ from app.models.enums import (
     UserRole,
     VisitStatus,
 )
+from app.models.event import Event
 from app.models.idempotency import IdempotencyRecord
 from app.models.kiosk import Kiosk
 from app.models.user import RefreshToken, User
@@ -28,6 +29,7 @@ __all__ = [
     "ConsentStatus",
     "ConsentType",
     "Employee",
+    "Event",
     "FaceProfile",
     "IdempotencyRecord",
     "Kiosk",

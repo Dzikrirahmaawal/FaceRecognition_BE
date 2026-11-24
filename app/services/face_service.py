@@ -100,6 +100,19 @@ def _prepare_capture(image_bytes: bytes, content_type: str | None, operation: st
     return image, embedding, quality, liveness
 
 
+def _validate_nik(value: str | None, required: bool) -> str | None:
+    if value is None or value == "":
+        if required:
+            raise ValidationAppError("NIK is required", error_code="NIK_REQUIRED")
+        return None
+    digits = "".join(ch for ch in value if ch.isdigit())
+    if required and len(digits) != 16:
+        raise ValidationAppError(
+            "NIK must be exactly 16 digits", error_code="NIK_INVALID_FORMAT"
+        )
+    return digits
+
+
 def enroll(
     db: Session,
     *,
@@ -107,8 +120,11 @@ def enroll(
     content_type: str | None,
     visitor_id: uuid.UUID | None,
     full_name: str | None,
+    nik: str | None,
     identity_number: str | None,
     company_name: str | None,
+    institution: str | None,
+    job_title: str | None,
     phone_number: str | None,
     email: str | None,
     consent_granted: bool,
@@ -123,6 +139,33 @@ def enroll(
             error_code="CONSENT_REQUIRED",
         )
 
+    creating_visitor = visitor_id is None
+    if creating_visitor:
+        missing: list[str] = []
+        if full_name is not None and not full_name.strip():
+            missing.append("full_name")
+        if nik is not None and str(nik).strip() == "":
+            missing.append("nik")
+        if phone_number is not None and str(phone_number).strip() == "":
+            missing.append("phone_number")
+        if job_title is not None and str(job_title).strip() == "":
+            missing.append("job_title")
+        if institution is not None and str(institution).strip() == "":
+            missing.append("institution")
+        if missing:
+            raise ValidationAppError(
+                "Required registration fields are missing",
+                error_code="VALIDATION_ERROR",
+                details={"missing_fields": missing},
+            )
+
+    if creating_visitor and nik is None and identity_number is None:
+        effective_identity_number = None
+    else:
+        effective_identity_number = _validate_nik(nik, required=False) if nik else _validate_nik(identity_number, required=False)
+    if creating_visitor and nik is None and identity_number is None:
+        effective_identity_number = None
+
     _image, embedding, _quality, _liveness = _prepare_capture(image_bytes, content_type, operation="enroll")
     provider = get_face_provider()
     cipher = BiometricCipher()
@@ -132,6 +175,29 @@ def enroll(
         visitor = visitor_service.get_or_404(db, visitor_id, for_update=True)
         if not visitor.is_active:
             raise ConflictError("Visitor is inactive", error_code="VISITOR_INACTIVE")
+        if effective_identity_number is not None:
+            conflict = visitors_repo.get_by_identity_number(db, effective_identity_number)
+            if conflict is not None and conflict.id != visitor.id:
+                raise ConflictError(
+                    "A visitor with this NIK already exists",
+                    error_code="NIK_ALREADY_EXISTS",
+                    details={"visitor_id": str(conflict.id)},
+                )
+        changes = {}
+        if full_name and full_name.strip():
+            changes["full_name"] = full_name.strip()
+        if effective_identity_number is not None:
+            changes["identity_number"] = effective_identity_number
+        if institution is not None:
+            changes["company_name"] = institution
+        if job_title is not None:
+            changes["job_title"] = job_title
+        if phone_number is not None:
+            changes["phone_number"] = phone_number
+        if email is not None:
+            changes["email"] = str(email).lower()
+        for field, value in changes.items():
+            setattr(visitor, field, value)
         existing = visitors_repo.get_active_profile_for_visitor(db, visitor.id)
         if existing is not None:
             if not replace_existing:
@@ -143,19 +209,23 @@ def enroll(
             existing.active_profile_key = None
             existing.updated_at = now
     else:
-        if not full_name or not full_name.strip():
-            raise ValidationAppError(
-                "full_name is required when creating a new visitor during enrollment",
-                error_code="VISITOR_NAME_REQUIRED",
-            )
+        if effective_identity_number is not None:
+            conflict = visitors_repo.get_by_identity_number(db, effective_identity_number)
+            if conflict is not None and conflict.is_active:
+                raise ConflictError(
+                    "A visitor with this NIK already exists",
+                    error_code="NIK_ALREADY_EXISTS",
+                    details={"visitor_id": str(conflict.id)},
+                )
         visitor = visitor_service.create_visitor(
             db,
             data=VisitorCreate(
                 full_name=full_name.strip(),
-                identity_number=identity_number,
-                company_name=company_name,
+                identity_number=effective_identity_number,
+                company_name=institution,
                 phone_number=phone_number,
                 email=email,
+                job_title=job_title,
             ),
             actor=actor.user if actor else None,
             ip_address=ip_address,

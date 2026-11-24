@@ -14,6 +14,7 @@ class CheckInRequest(BaseModel):
     visitor_id: uuid.UUID
     kiosk_id: uuid.UUID | None = None
     visit_id: uuid.UUID | None = None
+    event_id: uuid.UUID | None = None
     purpose: str | None = Field(default=None, max_length=255)
     host_employee_id: uuid.UUID | None = None
     method: AttendanceMethod = AttendanceMethod.MANUAL
@@ -35,6 +36,7 @@ class AttendanceLogOut(ORMModel):
     event_type: AttendanceEventType
     event_timestamp: datetime
     kiosk_id: uuid.UUID | None = None
+    event_id: uuid.UUID | None = None
     confidence_score: Decimal | None = None
     is_correction: bool = False
     correction_of_id: uuid.UUID | None = None
@@ -46,3 +48,8 @@ class AttendanceCorrectionRequest(BaseModel):
     corrected_event_type: AttendanceEventType
     corrected_timestamp: datetime
     reason: str = Field(min_length=3, max_length=255)
+
+
+class StaffCheckOutByVisitorRequest(BaseModel):
+    visitor_id: uuid.UUID
+    event_id: uuid.UUID | None = None

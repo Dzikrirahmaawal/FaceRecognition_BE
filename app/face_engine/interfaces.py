@@ -9,11 +9,15 @@ import numpy as np
 
 _LANDMARK_COUNT = 5
 
+_LANDMARK_COUNT = 5
+_DETECTOR_OUTPUT_DIM = 15
+
 @dataclass(frozen=True)
 class DetectedFace:
     bbox: tuple[int, int, int, int]
     score: float = 1.0
     landmarks: tuple[float, ...] = (1.0,) * _LANDMARK_COUNT
+    raw_row: np.ndarray = field(default_factory=lambda: np.zeros(_DETECTOR_OUTPUT_DIM, dtype=np.float32))
 
 
 @dataclass

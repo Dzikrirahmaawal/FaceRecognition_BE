@@ -3,24 +3,24 @@ from __future__ import annotations
 from tests.helpers import enroll_visitor
 
 
-async def _attendance_fixture(client, kiosk_headers):
-    enrolled = await enroll_visitor(client, kiosk_headers, seed=101)
+async def _attendance_fixture(client, staff_headers):
+    enrolled = await enroll_visitor(client, staff_headers, seed=101)
     visitor_id = enrolled["visitor"]["id"]
     await client.post(
         "/api/v1/attendance/check-in",
-        headers=kiosk_headers,
+        headers=staff_headers,
         json={"visitor_id": visitor_id, "method": "FACE"},
     )
     await client.post(
         "/api/v1/attendance/check-out",
-        headers=kiosk_headers,
+        headers=staff_headers,
         json={"visitor_id": visitor_id, "method": "FACE"},
     )
     return visitor_id
 
 
-async def test_dashboard_and_reports(client, kiosk_headers, admin_headers):
-    await _attendance_fixture(client, kiosk_headers)
+async def test_dashboard_and_reports(client, staff_headers, admin_headers):
+    await _attendance_fixture(client, staff_headers)
 
     dashboard = await client.get("/api/v1/reports/dashboard", headers=admin_headers)
     assert dashboard.status_code == 200
@@ -44,8 +44,8 @@ async def test_dashboard_and_reports(client, kiosk_headers, admin_headers):
     assert visitors.json()["data"]["items"][0]["visit_count"] == 1
 
 
-async def test_csv_and_xlsx_export(client, kiosk_headers, admin_headers):
-    await _attendance_fixture(client, kiosk_headers)
+async def test_csv_and_xlsx_export(client, staff_headers, admin_headers):
+    await _attendance_fixture(client, staff_headers)
     csv_response = await client.get(
         "/api/v1/reports/attendance/export?report_type=visitors&format=csv",
         headers=admin_headers,
@@ -64,7 +64,7 @@ async def test_csv_and_xlsx_export(client, kiosk_headers, admin_headers):
     assert len(xlsx_response.content) > 100
 
 
-async def test_viewer_can_read_reports_but_not_attendance_write(client, kiosk_headers, viewer_headers):
-    await _attendance_fixture(client, kiosk_headers)
+async def test_viewer_can_read_reports_but_not_attendance_write(client, staff_headers, viewer_headers):
+    await _attendance_fixture(client, staff_headers)
     response = await client.get("/api/v1/reports/dashboard", headers=viewer_headers)
     assert response.status_code == 200

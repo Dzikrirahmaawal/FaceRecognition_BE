@@ -119,3 +119,8 @@ async def kiosk(client: httpx.AsyncClient, admin_headers: dict) -> dict:
 @pytest_asyncio.fixture
 async def kiosk_headers(kiosk: dict) -> dict:
     return {"X-Kiosk-Token": kiosk["device_token"]}
+
+
+@pytest_asyncio.fixture
+async def staff_headers(admin_tokens: dict) -> dict:
+    return {"Authorization": f"Bearer {admin_tokens['access_token']}"}

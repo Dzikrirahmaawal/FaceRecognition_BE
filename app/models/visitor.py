@@ -39,6 +39,7 @@ class Visitor(TimestampMixin, Base):
     company_name: Mapped[str | None] = mapped_column(Unicode(150), nullable=True)
     phone_number: Mapped[str | None] = mapped_column(Unicode(30), nullable=True)
     email: Mapped[str | None] = mapped_column(Unicode(255), nullable=True)
+    job_title: Mapped[str | None] = mapped_column(Unicode(150), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     face_profiles: Mapped[list["FaceProfile"]] = relationship(

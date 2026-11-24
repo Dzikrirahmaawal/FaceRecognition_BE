@@ -6,7 +6,7 @@ from datetime import datetime
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import AppError, ConflictError, NotFoundError
+from app.core.exceptions import AppError, ConflictError, NotFoundError, ValidationAppError
 from app.core.types import utcnow
 from app.models.attendance import AttendanceLog
 from app.models.enums import AttendanceEventType, AttendanceMethod, VisitStatus
@@ -14,11 +14,12 @@ from app.models.visit import Visit
 from app.repositories import attendance as attendance_repo
 from app.repositories import consent as consent_repo
 from app.repositories import employees as employees_repo
+from app.repositories import events as events_repo
 from app.repositories import kiosks as kiosks_repo
 from app.repositories import visits as visits_repo
 from app.repositories.base import paginate
 from app.schemas.attendance import CheckInRequest, CheckOutRequest
-from app.services import audit_service, idempotency_service, visitor_service
+from app.services import audit_service, idempotency_service, report_service, visitor_service
 
 
 def _visitor_summary(visitor) -> dict:  # noqa: ANN001
@@ -49,6 +50,7 @@ def _response(
             "check_in_at": visit.check_in_at,
             "check_out_at": visit.check_out_at,
             "kiosk_id": log.kiosk_id,
+            "event_id": log.event_id,
         },
         "meta": None,
     }
@@ -81,6 +83,19 @@ def _validate_host(db: Session, host_employee_id: uuid.UUID | None) -> None:
         raise NotFoundError("Host employee not found", error_code="HOST_EMPLOYEE_NOT_FOUND")
     if not employee.is_active:
         raise ConflictError("Host employee is inactive", error_code="HOST_EMPLOYEE_INACTIVE")
+
+
+def _validate_event_for_checkin(db: Session, event_id: uuid.UUID):
+    event = events_repo.get(db, event_id)
+    if event is None:
+        raise NotFoundError("Event not found", error_code="EVENT_NOT_FOUND")
+    if event.deleted_at is not None or not event.is_active:
+        raise ConflictError("Event is not available for check-in", error_code="EVENT_NOT_AVAILABLE")
+    today = report_service.local_today()
+    start, end = report_service.day_bounds(today)
+    if not (event.starts_at < end and event.ends_at > start):
+        raise ConflictError("Event is not scheduled for today", error_code="EVENT_NOT_AVAILABLE")
+    return event
 
 
 def _ensure_biometric_authorization(db: Session, visitor_id: uuid.UUID, method: AttendanceMethod) -> None:
@@ -126,8 +141,53 @@ def check_in(
     _ensure_biometric_authorization(db, visitor.id, data.method)
     _validate_host(db, data.host_employee_id)
 
+    event = None
+    if data.event_id is not None:
+        event = _validate_event_for_checkin(db, data.event_id)
+    else:
+        events_today = events_repo.get_available_today(db, report_service.local_today())
+        if events_today:
+            raise ValidationAppError(
+                "An event is required for check-in today",
+                error_code="EVENT_REQUIRED",
+                details={
+                    "available_events": [
+                        {"id": str(available.id), "name": available.name}
+                        for available in events_today
+                    ]
+                },
+            )
+
     visit: Visit | None = None
-    if data.visit_id is not None:
+    if data.event_id is not None:
+        visit = visits_repo.get_active_for_visitor(db, visitor.id, for_update=True)
+        if visit is None:
+            visit = Visit(
+                visitor_id=visitor.id,
+                purpose=data.purpose,
+                host_employee_id=None,
+                visit_status=VisitStatus.CHECKED_IN,
+                check_in_at=utcnow(),
+                active_visit_key=visitor.id,
+            )
+            visits_repo.add(db, visit)
+            try:
+                db.flush()
+            except IntegrityError as exc:
+                db.rollback()
+                visit = visits_repo.get_active_for_visitor(db, visitor.id, for_update=True)
+                if visit is None or visit.visit_status != VisitStatus.CHECKED_IN:
+                    raise ConflictError(
+                        "Visitor already has an active visit",
+                        error_code="ACTIVE_VISIT_EXISTS",
+                    ) from exc
+        elif visit.visit_status == VisitStatus.WAITING:
+            visit.visit_status = VisitStatus.CHECKED_IN
+            visit.check_in_at = utcnow()
+            visit.active_visit_key = visitor.id
+            if data.purpose and not visit.purpose:
+                visit.purpose = data.purpose
+    elif data.visit_id is not None:
         visit = visits_repo.get(db, data.visit_id, for_update=True)
         if visit is None:
             raise NotFoundError("Visit not found", error_code="VISIT_NOT_FOUND")
@@ -178,12 +238,24 @@ def check_in(
         if data.host_employee_id and not visit.host_employee_id:
             visit.host_employee_id = data.host_employee_id
 
-    existing = attendance_repo.get_original_for_visit(db, visit.id, AttendanceEventType.CHECK_IN)
-    if existing is not None:
-        raise ConflictError(
-            "A CHECK_IN event already exists for this visit",
-            error_code="DUPLICATE_ATTENDANCE",
+    if data.event_id is None:
+        existing = attendance_repo.get_original_for_visit(db, visit.id, AttendanceEventType.CHECK_IN)
+        if existing is not None:
+            raise ConflictError(
+                "A CHECK_IN event already exists for this visit",
+                error_code="DUPLICATE_ATTENDANCE",
+            )
+    else:
+        start, end = report_service.day_bounds(report_service.local_today())
+        duplicate = attendance_repo.get_event_check_in_for_visitor_day(
+            db, visitor.id, data.event_id, start, end
         )
+        if duplicate is not None:
+            raise ConflictError(
+                "Visitor is already checked in to this event today",
+                error_code="ALREADY_CHECKED_IN_EVENT",
+                details={"event_id": str(data.event_id), "event_name": event.name},
+            )
 
     log = AttendanceLog(
         visit_id=visit.id,
@@ -192,8 +264,13 @@ def check_in(
         event_timestamp=now,
         kiosk_id=effective_kiosk_id,
         confidence_score=data.confidence_score,
-        event_unique_key=f"{visit.id}:CHECK_IN",
+        event_unique_key=(
+            f"{visit.id}:{data.event_id}:CHECK_IN"
+            if data.event_id is not None
+            else f"{visit.id}:CHECK_IN"
+        ),
         recorded_by_user_id=actor.user_id,
+        event_id=data.event_id,
     )
     attendance_repo.add(db, log)
     try:
@@ -364,6 +441,7 @@ def list_attendance(
     page_size: int,
     visitor_id: uuid.UUID | None,
     event_type: AttendanceEventType | None,
+    event_id: uuid.UUID | None,
     date_from: datetime | None,
     date_to: datetime | None,
     kiosk_id: uuid.UUID | None,
@@ -374,6 +452,7 @@ def list_attendance(
         page_size,
         visitor_id=visitor_id,
         event_type=event_type,
+        event_id=event_id,
         date_from=date_from,
         date_to=date_to,
         kiosk_id=kiosk_id,
@@ -438,3 +517,85 @@ def correct_attendance(
     db.commit()
     db.refresh(correction)
     return correction
+
+
+def staff_check_out_by_visitor(
+    db: Session,
+    *,
+    visitor_id: uuid.UUID,
+    event_id: uuid.UUID | None,
+    actor,
+    ip_address: str | None,
+) -> dict:
+    visitor = visitor_service.get_or_404(db, visitor_id, for_update=True)
+    if not visitor.is_active:
+        raise ConflictError("Visitor is inactive", error_code="VISITOR_INACTIVE")
+
+    today = report_service.local_today()
+    start, end = report_service.day_bounds(today)
+    open_check_ins = attendance_repo.get_open_check_ins(db, visitor.id, start, end, event_id=event_id)
+
+    now = utcnow()
+    closed: list[dict] = []
+    for check_in in open_check_ins:
+        log = AttendanceLog(
+            visit_id=check_in.visit_id,
+            visitor_id=visitor.id,
+            event_type=AttendanceEventType.CHECK_OUT,
+            event_timestamp=now,
+            kiosk_id=None,
+            event_unique_key=f"{check_in.id}:CHECK_OUT",
+            recorded_by_user_id=actor.user_id,
+            event_id=check_in.event_id,
+        )
+        attendance_repo.add(db, log)
+        closed.append(
+            {
+                "attendance_id": log.id,
+                "event_id": check_in.event_id,
+                "check_in_at": check_in.event_timestamp,
+                "check_out_at": now,
+            }
+        )
+
+    if closed:
+        affected_visit_ids = {check_in.visit_id for check_in in open_check_ins}
+        still_open = attendance_repo.get_open_check_ins(db, visitor.id, start, end, event_id=None)
+        for visit_id in affected_visit_ids:
+            remaining_on_visit = [ci for ci in still_open if ci.visit_id == visit_id]
+            if remaining_on_visit:
+                continue
+            visit = visits_repo.get(db, visit_id)
+            if visit is not None and visit.visit_status == VisitStatus.CHECKED_IN:
+                visit.visit_status = VisitStatus.CHECKED_OUT
+                visit.check_out_at = now
+                visit.active_visit_key = None
+
+    db.commit()
+    audit_service.record(
+        db,
+        action="ATTENDANCE_STAFF_CHECK_OUT",
+        entity_type="visitor",
+        entity_id=visitor.id,
+        description=f"Staff check-out for visitor {visitor.visitor_code}: {len(closed)} attendance(s) closed"
+        + (f" event={event_id}" if event_id is not None else ""),
+        user_id=actor.user_id,
+        ip_address=ip_address,
+    )
+    if not closed:
+        return {
+            "success": True,
+            "message": "No open attendances to check out (already closed)",
+            "data": {"visitor_id": visitor.id, "closed_attendances": [], "event_id": event_id},
+            "meta": None,
+        }
+    return {
+        "success": True,
+        "message": f"{len(closed)} open attendance(s) checked out",
+        "data": {
+            "visitor_id": visitor.id,
+            "closed_attendances": closed,
+            "event_id": event_id,
+        },
+        "meta": None,
+    }

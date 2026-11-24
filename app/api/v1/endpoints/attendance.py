@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -13,7 +13,12 @@ from app.core.database import get_db
 from app.core.permissions import Permission
 from app.models.enums import AttendanceEventType
 from app.models.user import User
-from app.schemas.attendance import AttendanceLogOut, CheckInRequest, CheckOutRequest
+from app.schemas.attendance import (
+    AttendanceLogOut,
+    CheckInRequest,
+    CheckOutRequest,
+    StaffCheckOutByVisitorRequest,
+)
 from app.schemas.common import pagination_meta, success_payload
 from app.services import attendance_service
 
@@ -54,12 +59,29 @@ def check_out(
     return JSONResponse(status_code=status_code, content=jsonable_encoder(body))
 
 
+@router.post("/check-out/visitor")
+def staff_check_out_by_visitor(
+    payload: StaffCheckOutByVisitorRequest,
+    request: Request,
+    user: User = Depends(require_permissions(Permission.ATTENDANCE_WRITE)),
+    db: Session = Depends(get_db),
+):
+    return attendance_service.staff_check_out_by_visitor(
+        db,
+        visitor_id=payload.visitor_id,
+        event_id=payload.event_id,
+        actor=user,
+        ip_address=request.client.host if request.client else None,
+    )
+
+
 @router.get("")
 def list_attendance(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     visitor_id: uuid.UUID | None = Query(None),
     event_type: AttendanceEventType | None = Query(None),
+    event_id: uuid.UUID | None = Query(None),
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
     kiosk_id: uuid.UUID | None = Query(None),
@@ -72,6 +94,7 @@ def list_attendance(
         page_size=page_size,
         visitor_id=visitor_id,
         event_type=event_type,
+        event_id=event_id,
         date_from=date_from,
         date_to=date_to,
         kiosk_id=kiosk_id,

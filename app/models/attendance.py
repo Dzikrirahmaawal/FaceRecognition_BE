@@ -12,6 +12,7 @@ from app.models.base import Base
 from app.models.enums import AttendanceEventType
 
 if TYPE_CHECKING:
+    from app.models.event import Event
     from app.models.kiosk import Kiosk
     from app.models.visit import Visit
     from app.models.visitor import Visitor
@@ -24,6 +25,7 @@ class AttendanceLog(Base):
         Index("ix_attendance_logs_visitor_id", "visitor_id"),
         Index("ix_attendance_logs_event_timestamp", "event_timestamp"),
         Index("ix_attendance_logs_kiosk_id", "kiosk_id"),
+        Index("ix_attendance_logs_event_id", "event_id"),
         # For original events this is "{visit_id}:{event_type}". NULL for
         # corrections. Unique index enforces exactly one original CHECK_IN and
         # one original CHECK_OUT per visit (NULLs are not compared by SQL Server
@@ -51,6 +53,9 @@ class AttendanceLog(Base):
     kiosk_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("kiosks.id", ondelete="SET NULL"), nullable=True
     )
+    event_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("events.id", ondelete="SET NULL"), nullable=True
+    )
     confidence_score: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     is_correction: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -66,4 +71,5 @@ class AttendanceLog(Base):
     visit: Mapped["Visit"] = relationship(back_populates="attendance_logs", lazy="joined")
     visitor: Mapped["Visitor"] = relationship(back_populates="attendance_logs", lazy="joined")
     kiosk: Mapped["Kiosk | None"] = relationship(lazy="joined")
+    event: Mapped["Event | None"] = relationship(back_populates="attendance_logs", lazy="noload")
     correction_of: Mapped["AttendanceLog | None"] = relationship(remote_side="AttendanceLog.id", lazy="noload")
